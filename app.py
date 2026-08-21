@@ -10,8 +10,13 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
     df_picks = conn.read(worksheet="Picks", ttl=0)
-    df_kader = conn.read(worksheet="NFL_Kader", ttl=3600)
-except Exception:
+    df_kader = conn.read(worksheet="NFL_Kader", ttl=0)
+    # Entferne Leerzeichen in Spaltennamen
+    df_kader.columns = [str(c).strip() for c in df_kader.columns]
+    if not df_picks.empty:
+        df_picks.columns = [str(c).strip() for c in df_picks.columns]
+except Exception as e:
+    st.error(f"Fehler beim Laden der Google Sheet Daten: {e}")
     df_picks = pd.DataFrame()
     df_kader = pd.DataFrame()
 
@@ -23,25 +28,34 @@ spieltag = st.sidebar.number_input("Spieltag (Week)", min_value=1, max_value=18,
 # Bisherige Picks des Nutzers laden
 user_picks = df_picks[df_picks["Spieler_Name"] == mitspieler] if not df_picks.empty and "Spieler_Name" in df_picks.columns else pd.DataFrame()
 
-# ---------------------------------------------------------
-# SAISON-SPERREN (Teams/Spieler pro Slot nur 1x pro Saison)
-# ---------------------------------------------------------
+# Helper zum sicheren Auslesen von Listen aus dem Kader-Sheet
+def get_clean_list(df, col_name):
+    if col_name in df.columns:
+        return [str(x).strip() for x in df[col_name].dropna().tolist() if str(x).strip() != "" and str(x) != "nan"]
+    return []
+
+# Helper zum Erstellen von Player -> Team Mappings
+def get_clean_map(df, player_col, team_col):
+    if player_col in df.columns and team_col in df.columns:
+        sub_df = df[[player_col, team_col]].dropna()
+        return {str(r[player_col]).strip(): str(r[team_col]).strip() for _, r in sub_df.iterrows() if str(r[player_col]).strip() != "" and str(r[player_col]) != "nan"}
+    return {}
+
+all_teams = get_clean_list(df_kader, "Teams")
+qb_map = get_clean_map(df_kader, "QBs", "QB_Team")
+wr_map = get_clean_map(df_kader, "WRs", "WR_Team")
+rb_map = get_clean_map(df_kader, "RBs", "RB_Team")
+
+# SAISON-SPERREN
 def get_saison_available(full_list, slot_name):
     if user_picks.empty or slot_name not in user_picks.columns:
-        return [x for x in full_list if pd.notna(x)]
-    used = user_picks[slot_name].dropna().unique()
-    return [x for x in full_list if pd.notna(x) and x not in used]
-
-all_teams = df_kader["Teams"].dropna().tolist() if "Teams" in df_kader.columns else []
+        return full_list
+    used = [str(x).strip() for x in user_picks[slot_name].dropna().unique()]
+    return [x for x in full_list if x not in used]
 
 avail_pass_off = get_saison_available(all_teams, "Pass_Offense")
 avail_rush_off = get_saison_available(all_teams, "Rush_Offense")
 avail_defense = get_saison_available(all_teams, "Defense")
-
-# Spieler-Mapping (Name -> Team)
-qb_map = dict(zip(df_kader["QBs"].dropna(), df_kader["QB_Team"].dropna())) if "QBs" in df_kader.columns else {}
-wr_map = dict(zip(df_kader["WRs"].dropna(), df_kader["WR_Team"].dropna())) if "WRs" in df_kader.columns else {}
-rb_map = dict(zip(df_kader["RBs"].dropna(), df_kader["RB_Team"].dropna())) if "RBs" in df_kader.columns else {}
 
 avail_qbs = get_saison_available(list(qb_map.keys()), "QB")
 avail_wrs = get_saison_available(list(wr_map.keys()), "WR")
@@ -51,38 +65,30 @@ st.subheader(f"Aufstellung für Week {spieltag} – {mitspieler}")
 
 col1, col2 = st.columns(2)
 
-# ---------------------------------------------------------
-# SPIELTAGS-SPERREN (Kein Team/Spieler-Team doppelt an Tag)
-# ---------------------------------------------------------
+# SPIELTAGS-SPERREN
 with col1:
     st.markdown("#### 🛡️ Teams")
     pass_sel = st.selectbox("Passing Offense Team", ["-- Bitte wählen --"] + sorted(avail_pass_off))
     
-    # Excludiere bereits gewähltes Pass Offense Team
     rush_options = [t for t in avail_rush_off if t != pass_sel]
     rush_sel = st.selectbox("Rushing Offense Team", ["-- Bitte wählen --"] + sorted(rush_options))
     
-    # Excludiere Pass & Rush Offense Teams
     def_options = [t for t in avail_defense if t not in [pass_sel, rush_sel]]
     def_sel = st.selectbox("Defense Team", ["-- Bitte wählen --"] + sorted(def_options))
 
-# Aktuell gewählte Teams an diesem Spieltag
 selected_teams_today = [t for t in [pass_sel, rush_sel, def_sel] if t != "-- Bitte wählen --"]
 
 with col2:
     st.markdown("#### 🏃 Spieler")
     
-    # QB Filter (Darf nicht aus gewählten Teams stammen)
     qb_options = [p for p in avail_qbs if qb_map.get(p) not in selected_teams_today]
     qb_sel = st.selectbox("Quarterback (QB)", ["-- Bitte wählen --"] + sorted(qb_options))
     
-    # WR Filter
     selected_qb_team = qb_map.get(qb_sel)
     blocked_teams_for_wr = selected_teams_today + ([selected_qb_team] if selected_qb_team else [])
     wr_options = [p for p in avail_wrs if wr_map.get(p) not in blocked_teams_for_wr]
     wr_sel = st.selectbox("Wide Receiver (WR)", ["-- Bitte wählen --"] + sorted(wr_options))
     
-    # RB Filter
     selected_wr_team = wr_map.get(wr_sel)
     blocked_teams_for_rb = blocked_teams_for_wr + ([selected_wr_team] if selected_wr_team else [])
     rb_options = [p for p in avail_rbs if rb_map.get(p) not in blocked_teams_for_rb]
@@ -91,7 +97,6 @@ with col2:
 st.markdown("---")
 st.markdown("#### 🃏 Joker einsetzen (Max. 1x pro Slot in der Saison)")
 
-# Joker-Prüfung
 used_jokers = user_picks["Joker_Slot"].dropna().tolist() if not user_picks.empty and "Joker_Slot" in user_picks.columns else []
 
 j1, j2, j3, j4, j5, j6 = st.columns(6)
@@ -102,14 +107,11 @@ joker_qb = j4.checkbox("QB", disabled=("QB" in used_jokers))
 joker_wr = j5.checkbox("WR", disabled=("WR" in used_jokers))
 joker_rb = j6.checkbox("RB", disabled=("RB" in used_jokers))
 
-# ---------------------------------------------------------
-# SPEICHERN IN GOOGLE SHEETS
-# ---------------------------------------------------------
+# SPEICHERN
 if st.button("Aufstellung speichern", type="primary"):
     if "-- Bitte wählen --" in [pass_sel, rush_sel, def_sel, qb_sel, wr_sel, rb_sel]:
         st.error("Bitte wähle für alle 6 Slots ein Team bzw. einen Spieler aus!")
     else:
-        # Gewählte Joker als Text erfassen
         jokers_set = []
         if joker_pass: jokers_set.append("Pass_Offense")
         if joker_rush: jokers_set.append("Rush_Offense")
