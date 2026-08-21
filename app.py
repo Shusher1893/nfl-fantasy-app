@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 
 st.set_page_config(page_title="NFL Fantasy League", page_icon="🏈", layout="wide")
-st.title("🏈 Unser NFL Fantasy Game")
+st.title("🏈 NFL Fantasy Saison 2027")
 
 # Links aus Secrets
 sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
