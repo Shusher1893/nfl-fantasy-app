@@ -1,40 +1,50 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
+import requests
 
 st.set_page_config(page_title="NFL Fantasy League", page_icon="🏈", layout="wide")
 st.title("🏈 Unser NFL Fantasy Game")
 
-# Verbindung zu Google Sheets
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Link aus den Secrets holen
+sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
 
-try:
-    df_picks = conn.read(worksheet="Picks", ttl=0)
-    df_kader = conn.read(worksheet="NFL_Kader", ttl=0)
-    # Entferne Leerzeichen in Spaltennamen
-    df_kader.columns = [str(c).strip() for c in df_kader.columns]
-    if not df_picks.empty:
+# Funktion zum sauberen Konvertieren von Freigabelinks zu CSV-Exporten
+def get_csv_url(url, sheet_name):
+    base_url = url.split("/edit")[0]
+    return f"{base_url}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+
+@st.cache_data(ttl=5)
+def load_data():
+    try:
+        url_picks = get_csv_url(sheet_url, "Picks")
+        url_kader = get_csv_url(sheet_url, "NFL_Kader")
+        
+        df_picks = pd.read_csv(url_picks)
+        df_kader = pd.read_csv(url_kader)
+        
         df_picks.columns = [str(c).strip() for c in df_picks.columns]
-except Exception as e:
-    st.error(f"Fehler beim Laden der Google Sheet Daten: {e}")
-    df_picks = pd.DataFrame()
-    df_kader = pd.DataFrame()
+        df_kader.columns = [str(c).strip() for c in df_kader.columns]
+        return df_picks, df_kader
+    except Exception as e:
+        st.error(f"Fehler beim Verbinden mit Google Sheets: {e}")
+        return pd.DataFrame(), pd.DataFrame()
+
+df_picks, df_kader = load_data()
 
 # Sidebar: Mitspieler & Spieltag
 st.sidebar.header("Einstellungen")
 mitspieler = st.sidebar.selectbox("Wer bist du?", ["Spieler 1", "Spieler 2"])
 spieltag = st.sidebar.number_input("Spieltag (Week)", min_value=1, max_value=18, value=1)
 
-# Bisherige Picks des Nutzers laden
+# Picks des Users laden
 user_picks = df_picks[df_picks["Spieler_Name"] == mitspieler] if not df_picks.empty and "Spieler_Name" in df_picks.columns else pd.DataFrame()
 
-# Helper zum sicheren Auslesen von Listen aus dem Kader-Sheet
+# Hilfsfunktionen
 def get_clean_list(df, col_name):
     if col_name in df.columns:
         return [str(x).strip() for x in df[col_name].dropna().tolist() if str(x).strip() != "" and str(x) != "nan"]
     return []
 
-# Helper zum Erstellen von Player -> Team Mappings
 def get_clean_map(df, player_col, team_col):
     if player_col in df.columns and team_col in df.columns:
         sub_df = df[[player_col, team_col]].dropna()
@@ -107,33 +117,9 @@ joker_qb = j4.checkbox("QB", disabled=("QB" in used_jokers))
 joker_wr = j5.checkbox("WR", disabled=("WR" in used_jokers))
 joker_rb = j6.checkbox("RB", disabled=("RB" in used_jokers))
 
-# SPEICHERN
 if st.button("Aufstellung speichern", type="primary"):
     if "-- Bitte wählen --" in [pass_sel, rush_sel, def_sel, qb_sel, wr_sel, rb_sel]:
         st.error("Bitte wähle für alle 6 Slots ein Team bzw. einen Spieler aus!")
     else:
-        jokers_set = []
-        if joker_pass: jokers_set.append("Pass_Offense")
-        if joker_rush: jokers_set.append("Rush_Offense")
-        if joker_def: jokers_set.append("Defense")
-        if joker_qb: jokers_set.append("QB")
-        if joker_wr: jokers_set.append("WR")
-        if joker_rb: jokers_set.append("RB")
-        
-        new_entry = pd.DataFrame([{
-            "Spieler_Name": mitspieler,
-            "Week": spieltag,
-            "Pass_Offense": pass_sel,
-            "Rush_Offense": rush_sel,
-            "Defense": def_sel,
-            "QB": qb_sel,
-            "WR": wr_sel,
-            "RB": rb_sel,
-            "Joker_Slot": ", ".join(jokers_set),
-            "Punkte": 0
-        }])
-        
-        updated_df = pd.concat([df_picks, new_entry], ignore_index=True)
-        conn.update(worksheet="Picks", data=updated_df)
-        st.success(f"Aufstellung für Week {spieltag} erfolgreich gespeichert!")
-        st.balloons()
+        st.success(f"Aufstellung für Week {spieltag} validiert!")
+        st.info("Hinweis: Speicher-Logik wird nach dem Verbindungstest final freigeschaltet.")
