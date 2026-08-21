@@ -5,10 +5,10 @@ import requests
 st.set_page_config(page_title="NFL Fantasy League", page_icon="🏈", layout="wide")
 st.title("🏈 Unser NFL Fantasy Game")
 
-# Link aus den Secrets holen
+# Links aus den Secrets holen
 sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+webhook_url = st.secrets["connections"]["gsheets"].get("webhook_url", "")
 
-# Funktion zum sauberen Konvertieren von Freigabelinks zu CSV-Exporten
 def get_csv_url(url, sheet_name):
     base_url = url.split("/edit")[0]
     return f"{base_url}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
@@ -26,7 +26,6 @@ def load_data():
         df_kader.columns = [str(c).strip() for c in df_kader.columns]
         return df_picks, df_kader
     except Exception as e:
-        st.error(f"Fehler beim Verbinden mit Google Sheets: {e}")
         return pd.DataFrame(), pd.DataFrame()
 
 df_picks, df_kader = load_data()
@@ -107,19 +106,49 @@ with col2:
 st.markdown("---")
 st.markdown("#### 🃏 Joker einsetzen (Max. 1x pro Slot in der Saison)")
 
-used_jokers = user_picks["Joker_Slot"].dropna().tolist() if not user_picks.empty and "Joker_Slot" in user_picks.columns else []
+# Bisher benutzte Joker auslesen
+used_jokers_str = ",".join(user_picks["Joker_Slot"].dropna().tolist()) if not user_picks.empty and "Joker_Slot" in user_picks.columns else ""
 
 j1, j2, j3, j4, j5, j6 = st.columns(6)
-joker_pass = j1.checkbox("Pass Offense", disabled=("Pass_Offense" in used_jokers))
-joker_rush = j2.checkbox("Rush Offense", disabled=("Rush_Offense" in used_jokers))
-joker_def = j3.checkbox("Defense", disabled=("Defense" in used_jokers))
-joker_qb = j4.checkbox("QB", disabled=("QB" in used_jokers))
-joker_wr = j5.checkbox("WR", disabled=("WR" in used_jokers))
-joker_rb = j6.checkbox("RB", disabled=("RB" in used_jokers))
+joker_pass = j1.checkbox("Pass Offense", disabled=("Pass_Offense" in used_jokers_str))
+joker_rush = j2.checkbox("Rush Offense", disabled=("Rush_Offense" in used_jokers_str))
+joker_def = j3.checkbox("Defense", disabled=("Defense" in used_jokers_str))
+joker_qb = j4.checkbox("QB", disabled=("QB" in used_jokers_str))
+joker_wr = j5.checkbox("WR", disabled=("WR" in used_jokers_str))
+joker_rb = j6.checkbox("RB", disabled=("RB" in used_jokers_str))
 
+# SPEICHERN
 if st.button("Aufstellung speichern", type="primary"):
     if "-- Bitte wählen --" in [pass_sel, rush_sel, def_sel, qb_sel, wr_sel, rb_sel]:
         st.error("Bitte wähle für alle 6 Slots ein Team bzw. einen Spieler aus!")
+    elif not webhook_url:
+        st.error("Bitte hinterlege zuerst die webhook_url in den Streamlit Secrets!")
     else:
-        st.success(f"Aufstellung für Week {spieltag} validiert!")
-        st.info("Hinweis: Speicher-Logik wird nach dem Verbindungstest final freigeschaltet.")
+        jokers_set = []
+        if joker_pass: jokers_set.append("Pass_Offense")
+        if joker_rush: jokers_set.append("Rush_Offense")
+        if joker_def: jokers_set.append("Defense")
+        if joker_qb: jokers_set.append("QB")
+        if joker_wr: jokers_set.append("WR")
+        if joker_rb: jokers_set.append("RB")
+        
+        payload = {
+            "Spieler_Name": mitspieler,
+            "Week": int(spieltag),
+            "Pass_Offense": pass_sel,
+            "Rush_Offense": rush_sel,
+            "Defense": def_sel,
+            "QB": qb_sel,
+            "WR": wr_sel,
+            "RB": rb_sel,
+            "Joker_Slot": ", ".join(jokers_set),
+            "Punkte": 0
+        }
+        
+        response = requests.post(webhook_url, json=payload)
+        if response.status_code == 200:
+            st.success(f"Aufstellung für Week {spieltag} erfolgreich in Google Sheets gespeichert!")
+            st.balloons()
+            st.cache_data.clear()
+        else:
+            st.error("Fehler beim Speichern in Google Sheets.")
