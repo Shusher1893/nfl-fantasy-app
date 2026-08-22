@@ -4,7 +4,7 @@ import requests
 import math
 
 st.set_page_config(page_title="NFL Fantasy League", page_icon="🏈", layout="wide")
-st.title("🏈 Unser NFL Fantasy Game")
+st.title("🏈 NFL Fantasy Season 2027")
 
 # Links & Secrets
 sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
@@ -95,7 +95,7 @@ def fetch_nfl_week_stats(season, week):
 # ==========================================
 with tab1:
     st.sidebar.header("Einstellungen")
-    mitspieler = st.sidebar.selectbox("Wer bist du?", ["Spieler 1", "Spieler 2"])
+    mitspieler = st.sidebar.selectbox("Wer bist du?", ["Dominic", "Uli"])
     spieltag = st.sidebar.number_input("Spieltag (Week)", min_value=1, max_value=18, value=1)
 
     user_picks = df_picks[df_picks["Spieler_Name"] == mitspieler] if not df_picks.empty and "Spieler_Name" in df_picks.columns else pd.DataFrame()
