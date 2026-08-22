@@ -77,8 +77,27 @@ def calculate_defense_points(sacks, def_td, points_allowed):
     return pts
 
 # ==========================================
-# SLEEPER API SCHNITTSTELLE
+# SLEEPER API SCHNITTSTELLE & MAPPING
 # ==========================================
+
+# Zuordnung deiner Teamnamen zu den offiziellen NFL-Kürzeln der API
+TEAM_MAPPING = {
+    "Cardinals": "ARI", "Falcons": "ATL", "Ravens": "BAL", "Bills": "BUF",
+    "Panthers": "CAR", "Bears": "CHI", "Bengals": "CIN", "Browns": "CLE",
+    "Cowboys": "DAL", "Broncos": "DEN", "Lions": "DET", "Packers": "GB",
+    "Texans": "HOU", "Colts": "IND", "Jaguars": "JAX", "Chiefs": "KC",
+    "Raiders": "LV", "Chargers": "LAC", "Rams": "LAR", "Dolphins": "MIA",
+    "Vikings": "MIN", "Patriots": "NE", "Saints": "NO", "Giants": "NYG",
+    "Jets": "NYJ", "Eagles": "PHI", "Steelers": "PIT", "49ers": "SF",
+    "Seahawks": "SEA", "Buccaneers": "TB", "Titans": "TEN", "Commanders": "WAS"
+}
+
+import re
+
+def get_clean_player_name(display_name):
+    """ Entfernt z. B. '(Chiefs)' aus 'Patrick Mahomes (Chiefs)' """
+    return re.sub(r'\s*\([^)]*\)', '', str(display_name)).strip()
+
 @st.cache_data(ttl=3600)
 def fetch_nfl_week_stats(season, week):
     try:
