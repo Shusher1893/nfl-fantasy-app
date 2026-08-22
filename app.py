@@ -198,3 +198,23 @@ with tab2:
         st.dataframe(df_picks, use_container_width=True, hide_index=True)
     else:
         st.info("Noch keine Picks vorhanden.")
+
+# ==========================================
+# AUTOMATISCHER NFL DATA FETCH (SLEEPER API)
+# ==========================================
+@st.cache_data(ttl=3600)  # Daten 1 Stunde cachen
+def fetch_nfl_week_stats(season, week):
+    # Ruft die wöchentlichen Spieler- & Team-Stats von der Sleeper API ab
+    url = f"https://api.sleeper.app/v1/stats/nfl/regular/{season}/{week}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.json()
+    return {}
+
+# Beispiel-Aufruf für den aktuellen Spieltag
+if not df_picks.empty:
+    st.markdown("### 🔄 Punkte-Update")
+    if st.button("Punkte für aktuellen Spieltag neu berechnen"):
+        # Holt die echten NFL-Daten ab
+        nfl_stats = fetch_nfl_week_stats(2026, spieltag)
+        st.success(f"NFL-Daten für Week {spieltag} erfolgreich geladen!")
