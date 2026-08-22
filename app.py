@@ -6,7 +6,7 @@ import math
 st.set_page_config(page_title="NFL Fantasy League", page_icon="🏈", layout="wide")
 st.title("🏈 Unser NFL Fantasy Game")
 
-# Links aus Secrets
+# Links & Secrets
 sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
 webhook_url = st.secrets["connections"]["gsheets"].get("webhook_url", "")
 
@@ -35,7 +35,63 @@ df_picks, df_kader = load_data()
 tab1, tab2 = st.tabs(["📝 Aufstellung abgeben", "📊 Rangliste & Bisherige Picks"])
 
 # ==========================================
-# TAB 1: AUFSTELLUNG
+# BERECHNUNGS-LOGIK FÜR ALLE 4 SLOT-TYPEN
+# ==========================================
+
+# 1. PASS OFFENSE (TEAM)
+def calculate_pass_offense_points(pass_yd, pass_td):
+    pts = 0
+    pts += math.floor(pass_yd / 25) * 1
+    pts += pass_td * 6
+    return pts
+
+# 2. RUSH OFFENSE (TEAM)
+def calculate_rush_offense_points(rush_yd, rush_td):
+    pts = 0
+    pts += math.floor(rush_yd / 10) * 1
+    pts += rush_td * 6
+    return pts
+
+# 3. EINZELSPIELER (QB, WR, RB)
+def calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td):
+    pts = 0
+    # Jede Kategorie wird einzeln abgerundet (keine Minuspunkte):
+    pts += max(0, math.floor(pass_yd / 25)) * 1  # 1 Pkt pro 25 Pass Yds
+    pts += max(0, math.floor(rush_yd / 10)) * 1  # 1 Pkt pro 10 Rush Yds
+    pts += max(0, math.floor(rec_yd / 10)) * 1   # 1 Pkt pro 10 Rec Yds
+    pts += (pass_td + rush_td + rec_td) * 6       # 6 Pkt pro TD
+    return pts
+
+# 4. DEFENSE (TEAM)
+def calculate_defense_points(sacks, def_td, points_allowed):
+    pts = 0
+    pts += sacks * 1
+    pts += def_td * 6
+    
+    if points_allowed == 0:
+        pts += 10
+    elif 2 <= points_allowed <= 9:
+        pts += 6
+    elif 10 <= points_allowed <= 20:
+        pts += 3
+    return pts
+
+# ==========================================
+# SLEEPER API SCHNITTSTELLE
+# ==========================================
+@st.cache_data(ttl=3600)
+def fetch_nfl_week_stats(season, week):
+    try:
+        url = f"https://api.sleeper.app/v1/stats/nfl/regular/{season}/{week}"
+        res = requests.get(url)
+        if res.status_code == 200:
+            return res.json()
+    except Exception:
+        pass
+    return {}
+
+# ==========================================
+# TAB 1: AUFSTELLUNG ABGEBEN
 # ==========================================
 with tab1:
     st.sidebar.header("Einstellungen")
@@ -155,35 +211,21 @@ with tab1:
                 st.error("Fehler beim Speichern in Google Sheets.")
 
 # ==========================================
-# BERECHNUNGS-LOGIK FÜR DIE SCORING-REGELN
-# ==========================================
-def calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td):
-    pts = 0
-    pts += math.floor(pass_yd / 25) * 1
-    pts += math.floor(rush_yd / 10) * 1
-    pts += math.floor(rec_yd / 10) * 1
-    pts += pass_td * 6
-    pts += rush_td * 6
-    pts += rec_td * 6
-    return pts
-
-def calculate_defense_points(sacks, def_td, points_allowed):
-    pts = 0
-    pts += sacks * 1
-    pts += def_td * 6
-    if points_allowed == 0:
-        pts += 10
-    elif 2 <= points_allowed <= 9:
-        pts += 6
-    elif 10 <= points_allowed <= 20:
-        pts += 3
-    return pts
-
-# ==========================================
-# TAB 2: RANGLISTE & PUNKTE
+# TAB 2: RANGLISTE & AUTOMATISCHER ABGLEICH
 # ==========================================
 with tab2:
     st.subheader("🏆 Aktueller Spielstand")
+    
+    selected_week_calc = st.selectbox("Punkte-Auswertung für Week:", list(range(1, 19)), index=int(spieltag)-1)
+    
+    if st.button("🔄 NFL-Punkte für ausgewählte Week live abrufen"):
+        stats = fetch_nfl_week_stats(2026, selected_week_calc)
+        if stats:
+            st.success(f"NFL-Boxscores für Week {selected_week_calc} geladen! Punkte werden berechnet.")
+        else:
+            st.warning(f"Keine Statistiken für Week {selected_week_calc} gefunden (Spieltag noch nicht gestartet/beendet?).")
+
+    st.markdown("---")
     
     if not df_picks.empty and "Punkte" in df_picks.columns:
         leaderboard = df_picks.groupby("Spieler_Name")["Punkte"].sum().reset_index()
@@ -194,27 +236,7 @@ with tab2:
             st.dataframe(leaderboard, use_container_width=True, hide_index=True)
             
         st.markdown("---")
-        st.subheader("📋 Bisherige Aufstellungen & Punkte")
+        st.subheader("📋 Alle bisher abgegebenen Picks")
         st.dataframe(df_picks, use_container_width=True, hide_index=True)
     else:
-        st.info("Noch keine Picks vorhanden.")
-
-# ==========================================
-# AUTOMATISCHER NFL DATA FETCH (SLEEPER API)
-# ==========================================
-@st.cache_data(ttl=3600)  # Daten 1 Stunde cachen
-def fetch_nfl_week_stats(season, week):
-    # Ruft die wöchentlichen Spieler- & Team-Stats von der Sleeper API ab
-    url = f"https://api.sleeper.app/v1/stats/nfl/regular/{season}/{week}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.json()
-    return {}
-
-# Beispiel-Aufruf für den aktuellen Spieltag
-if not df_picks.empty:
-    st.markdown("### 🔄 Punkte-Update")
-    if st.button("Punkte für aktuellen Spieltag neu berechnen"):
-        # Holt die echten NFL-Daten ab
-        nfl_stats = fetch_nfl_week_stats(2026, spieltag)
-        st.success(f"NFL-Daten für Week {spieltag} erfolgreich geladen!")
+        st.info("Noch keine Picks in Google Sheets vorhanden.")
