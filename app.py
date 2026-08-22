@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 import requests
+import math
 
 st.set_page_config(page_title="NFL Fantasy League", page_icon="🏈", layout="wide")
-st.title("🏈 NFL Fantasy Saison 2027")
+st.title("🏈 Unser NFL Fantasy Game")
 
 # Links aus Secrets
 sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
@@ -38,7 +39,7 @@ tab1, tab2 = st.tabs(["📝 Aufstellung abgeben", "📊 Rangliste & Bisherige Pi
 # ==========================================
 with tab1:
     st.sidebar.header("Einstellungen")
-    mitspieler = st.sidebar.selectbox("Wer bist du?", ["Dominic", "Uli"])
+    mitspieler = st.sidebar.selectbox("Wer bist du?", ["Spieler 1", "Spieler 2"])
     spieltag = st.sidebar.number_input("Spieltag (Week)", min_value=1, max_value=18, value=1)
 
     user_picks = df_picks[df_picks["Spieler_Name"] == mitspieler] if not df_picks.empty and "Spieler_Name" in df_picks.columns else pd.DataFrame()
@@ -154,13 +155,37 @@ with tab1:
                 st.error("Fehler beim Speichern in Google Sheets.")
 
 # ==========================================
-# TAB 2: RANGLISTE & BALKEN-DIAGRAMME
+# BERECHNUNGS-LOGIK FÜR DIE SCORING-REGELN
+# ==========================================
+def calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td):
+    pts = 0
+    pts += math.floor(pass_yd / 25) * 1
+    pts += math.floor(rush_yd / 10) * 1
+    pts += math.floor(rec_yd / 10) * 1
+    pts += pass_td * 6
+    pts += rush_td * 6
+    pts += rec_td * 6
+    return pts
+
+def calculate_defense_points(sacks, def_td, points_allowed):
+    pts = 0
+    pts += sacks * 1
+    pts += def_td * 6
+    if points_allowed == 0:
+        pts += 10
+    elif 2 <= points_allowed <= 9:
+        pts += 6
+    elif 10 <= points_allowed <= 20:
+        pts += 3
+    return pts
+
+# ==========================================
+# TAB 2: RANGLISTE & PUNKTE
 # ==========================================
 with tab2:
     st.subheader("🏆 Aktueller Spielstand")
     
     if not df_picks.empty and "Punkte" in df_picks.columns:
-        # Summiere Punkte pro Mitspieler
         leaderboard = df_picks.groupby("Spieler_Name")["Punkte"].sum().reset_index()
         leaderboard = leaderboard.sort_values(by="Punkte", ascending=False)
         
@@ -169,7 +194,7 @@ with tab2:
             st.dataframe(leaderboard, use_container_width=True, hide_index=True)
             
         st.markdown("---")
-        st.subheader("📋 Bisherige Aufstellungen")
+        st.subheader("📋 Bisherige Aufstellungen & Punkte")
         st.dataframe(df_picks, use_container_width=True, hide_index=True)
     else:
-        st.info("Noch keine Ergebnisse vorhanden.")
+        st.info("Noch keine Picks vorhanden.")
