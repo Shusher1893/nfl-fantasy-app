@@ -4,7 +4,7 @@ import requests
 import math
 
 st.set_page_config(page_title="NFL Fantasy League", page_icon="🏈", layout="wide")
-st.title("🏈 NFL Fantasy Season 2027")
+st.title("🏈 NFL Fantasy Season 2026/2027")
 
 # Links & Secrets
 sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
