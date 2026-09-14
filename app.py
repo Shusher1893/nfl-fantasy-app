@@ -397,7 +397,7 @@ with tab2:
     if not df_picks.empty:
         df_calc = df_picks.copy()
         
-                if st.button("🔄 NFL-Punkte für ausgewählte Week live abrufen"):
+        if st.button("🔄 NFL-Punkte für ausgewählte Week live abrufen"):
             with st.spinner("Lade NFL-Statistiken von Sleeper..."):
                 stats = fetch_nfl_week_stats(2026, selected_week_calc)
                 players_map, id_to_team_map = fetch_sleeper_players_map()
@@ -423,7 +423,7 @@ with tab2:
             
             st.dataframe(leaderboard, use_container_width=True, hide_index=True)
             
-            # --- NEU: Detaillierte Fehlerdiagnose / Aufschlüsselung ---
+            # Detaillierte Fehlerdiagnose / Aufschlüsselung
             if "breakdowns" in st.session_state:
                 st.markdown("---")
                 st.subheader("🔍 Detail-Analyse der Punkteberechnung")
