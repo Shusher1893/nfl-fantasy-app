@@ -63,18 +63,35 @@ def calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td):
     return pts
 
 # 4. DEFENSE (TEAM)
-def calculate_defense_points(sacks, def_td, points_allowed):
+def calculate_def_points(sacks, interceptions, def_td, opponent_points):
+    """
+    Berechnet die Defense-Punkte nach deinen exakten Vorgaben:
+    - 1 Pkt pro Sack
+    - 2 Pkt pro Interception
+    - 6 Pkt pro Defensive TD
+    - Staffel-Bonus für zugelassene Punkte des Gegners:
+        0 Punkte           -> 10 Pkt
+        1 - 9 Punkte       -> 6 Pkt
+        10 - 20 Punkte     -> 3 Pkt
+        > 20 Punkte        -> 0 Pkt
+    """
     pts = 0
-    pts += sacks * 1
-    pts += def_td * 6
+    pts += max(0, sacks) * 1            # 1 Pkt pro Sack
+    pts += max(0, interceptions) * 2    # 2 Pkt pro Interception
+    pts += max(0, def_td) * 6           # 6 Pkt pro Def TD
     
-    if points_allowed == 0:
+    # Exakter Staffel-Bonus für zugelassene Punkte (Opponent Points)
+    if opponent_points == 0:
         pts += 10
-    elif 2 <= points_allowed <= 9:
+    elif 1 <= opponent_points <= 9:
         pts += 6
-    elif 10 <= points_allowed <= 20:
+    elif 10 <= opponent_points <= 20:
         pts += 3
+    else:
+        pts += 0
+        
     return pts
+
 
 # ==========================================
 # SLEEPER API SCHNITTSTELLE & MAPPING
