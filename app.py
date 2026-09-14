@@ -53,13 +53,14 @@ def calculate_rush_offense_points(rush_yd, rush_td):
     return pts
 
 # 3. EINZELSPIELER (QB, WR, RB)
-def calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td):
+def calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td, pass_int=0):
     pts = 0
-    # Jede Kategorie wird einzeln abgerundet (keine Minuspunkte):
+    # Jede Kategorie wird einzeln abgerundet:
     pts += max(0, math.floor(pass_yd / 25)) * 1  # 1 Pkt pro 25 Pass Yds
     pts += max(0, math.floor(rush_yd / 10)) * 1  # 1 Pkt pro 10 Rush Yds
     pts += max(0, math.floor(rec_yd / 10)) * 1   # 1 Pkt pro 10 Rec Yds
     pts += (pass_td + rush_td + rec_td) * 6       # 6 Pkt pro TD
+    pts -= pass_int * 2                           # 2 Minuspunkte pro Interception
     return pts
 
 # 4. DEFENSE (TEAM)
@@ -313,7 +314,7 @@ def calculate_row_points(row, stats_json, name_to_id_map):
     if "Defense" in jokers: pts_def *= 2
     total_pts += pts_def
 
-    # 4-6. Einzelspieler (QB, WR, RB)
+        # 4-6. Einzelspieler (QB, WR, RB)
     for pos_key in ["QB", "WR", "RB"]:
         raw_name = row.get(pos_key, "")
         if raw_name and str(raw_name) != "nan":
@@ -328,8 +329,9 @@ def calculate_row_points(row, stats_json, name_to_id_map):
             pass_td = p_stats.get("pass_td", 0)
             rush_td = p_stats.get("rush_td", 0)
             rec_td = p_stats.get("rec_td", 0)
+            pass_int = p_stats.get("pass_int", 0)  # Interceptions von Sleeper holen
             
-            p_pts = calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td)
+            p_pts = calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td, pass_int)
             if pos_key in jokers: p_pts *= 2
             total_pts += p_pts
 
