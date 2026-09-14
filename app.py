@@ -253,52 +253,74 @@ with tab1:
 
 @st.cache_data(ttl=86400)
 def fetch_sleeper_players_map():
-    """Lädt einmal täglich die komplette Sleeper-Spielerdatenbank (ID -> Name)."""
+    """Lädt einmal täglich die komplette Sleeper-Spielerdatenbank (ID -> Name & ID -> Team)."""
     try:
         url = "https://api.sleeper.app/v1/players/nfl"
         res = requests.get(url)
         if res.status_code == 200:
             data = res.json()
-            # Mapping: Name (lowercase) -> Player ID
             name_to_id = {}
+            id_to_team = {}
             for p_id, p_info in data.items():
                 full_name = p_info.get("full_name")
+                team = p_info.get("team")
                 if full_name:
                     name_to_id[full_name.strip().lower()] = p_id
-            return name_to_id
+                if team:
+                    id_to_team[p_id] = team.upper()
+            return name_to_id, id_to_team
     except Exception:
         pass
-    return {}
+    return {}, {}
 
-def calculate_row_points_with_breakdown(row, stats_json, name_to_id_map):
+
+def get_team_aggregated_offense_stats(team_abbr, stats_json, id_to_team_map):
+    """
+    Summiert alle Pass- und Rush-Stats aller Spieler eines bestimmten Teams für die Woche auf.
+    """
+    total_p_yd = 0
+    total_p_td = 0
+    total_r_yd = 0
+    total_r_td = 0
+
+    for p_id, p_stats in stats_json.items():
+        # Prpfe, ob dieser Spieler zum gesuchten Team gehört
+        if id_to_team_map.get(str(p_id)) == team_abbr.upper():
+            total_p_yd += p_stats.get("pass_yd", 0)
+            total_p_td += p_stats.get("pass_td", 0)
+            total_r_yd += p_stats.get("rush_yd", 0)
+            total_r_td += p_stats.get("rush_td", 0)
+
+    return total_p_yd, total_p_td, total_r_yd, total_r_td
+
+
+def calculate_row_points_with_breakdown(row, stats_json, name_to_id_map, id_to_team_map):
     total_pts = 0
     breakdown = []
     jokers = [j.strip() for j in str(row.get("Joker_Slot", "")).split(",") if j.strip()]
 
-    # 1. Pass Offense Team
+    # 1. Pass Offense Team (Aggregiert aus allen Teamspielern)
     pass_team = str(row.get("Pass_Offense", "")).strip()
-    team_abbr = TEAM_MAPPING.get(pass_team, pass_team)
-    team_stats = stats_json.get(team_abbr, {})
-    p_yd = team_stats.get("pass_yd", 0) or stats_json.get(f"{team_abbr}_pass_yd", 0)
-    p_td = team_stats.get("pass_td", 0) or stats_json.get(f"{team_abbr}_pass_td", 0)
+    team_abbr_p = TEAM_MAPPING.get(pass_team, pass_team)
+    p_yd, p_td, _, _ = get_team_aggregated_offense_stats(team_abbr_p, stats_json, id_to_team_map)
+    
     pts_pass = calculate_pass_offense_points(p_yd, p_td)
     if "Pass_Offense" in jokers: pts_pass *= 2
     total_pts += pts_pass
     breakdown.append({
         "Kategorie": "Pass Offense",
         "Auswahl": pass_team,
-        "Sleeper-Key/ID": team_abbr,
+        "Sleeper-Key/ID": team_abbr_p,
         "Stats": f"{p_yd} Yds, {p_td} TDs",
         "Joker": "Pass_Offense" in jokers,
         "Punkte": pts_pass
     })
 
-    # 2. Rush Offense Team
+    # 2. Rush Offense Team (Aggregiert aus allen Teamspielern)
     rush_team = str(row.get("Rush_Offense", "")).strip()
     team_abbr_r = TEAM_MAPPING.get(rush_team, rush_team)
-    rush_stats = stats_json.get(team_abbr_r, {})
-    r_yd = rush_stats.get("rush_yd", 0) or stats_json.get(f"{team_abbr_r}_rush_yd", 0)
-    r_td = rush_stats.get("rush_td", 0) or stats_json.get(f"{team_abbr_r}_rush_td", 0)
+    _, _, r_yd, r_td = get_team_aggregated_offense_stats(team_abbr_r, stats_json, id_to_team_map)
+    
     pts_rush = calculate_rush_offense_points(r_yd, r_td)
     if "Rush_Offense" in jokers: pts_rush *= 2
     total_pts += pts_rush
@@ -375,16 +397,16 @@ with tab2:
     if not df_picks.empty:
         df_calc = df_picks.copy()
         
-        if st.button("🔄 NFL-Punkte für ausgewählte Week live abrufen"):
+                if st.button("🔄 NFL-Punkte für ausgewählte Week live abrufen"):
             with st.spinner("Lade NFL-Statistiken von Sleeper..."):
                 stats = fetch_nfl_week_stats(2026, selected_week_calc)
-                players_map = fetch_sleeper_players_map()
+                players_map, id_to_team_map = fetch_sleeper_players_map()
                 
                 if stats:
                     breakdowns = {}
                     for idx, row in df_calc.iterrows():
                         if int(row.get("Week", 0)) == int(selected_week_calc):
-                            computed_pts, df_bd = calculate_row_points_with_breakdown(row, stats, players_map)
+                            computed_pts, df_bd = calculate_row_points_with_breakdown(row, stats, players_map, id_to_team_map)
                             df_calc.at[idx, "Punkte"] = computed_pts
                             breakdowns[f"{row.get('Spieler_Name')} (Week {selected_week_calc})"] = df_bd
                     
