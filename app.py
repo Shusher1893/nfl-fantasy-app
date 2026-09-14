@@ -247,27 +247,40 @@ with tab1:
                 st.error("Fehler beim Speichern in Google Sheets.")
 
 # ==========================================
-# HELPER FOR SLEEPER STATS MATCHING
+# SLEEPER API SCHNITTSTELLE & MATCHING
 # ==========================================
-def get_sleeper_player_stats(stats_json, player_name):
-    """Sucht nach dem Spieler-Namen im Sleeper-Stats-JSON."""
-    clean_search_name = re.sub(r'\s*\([^)]*\)', '', str(player_name)).strip().lower()
-    for player_id, p_stats in stats_json.items():
-        # Manche API-Responsen nutzen 'player' mit Namen
-        p_name = p_stats.get("player_name", "") or p_stats.get("full_name", "")
-        if clean_search_name in p_name.lower():
-            return p_stats
+
+@st.cache_data(ttl=86400)
+def fetch_sleeper_players_map():
+    """Lädt einmal täglich die komplette Sleeper-Spielerdatenbank (ID -> Name)."""
+    try:
+        url = "https://api.sleeper.app/v1/players/nfl"
+        res = requests.get(url)
+        if res.status_code == 200:
+            data = res.json()
+            # Mapping: Name (lowercase) -> Player ID
+            name_to_id = {}
+            for p_id, p_info in data.items():
+                full_name = p_info.get("full_name")
+                if full_name:
+                    name_to_id[full_name.strip().lower()] = p_id
+            return name_to_id
+    except Exception:
+        pass
     return {}
 
-def calculate_row_points(row, stats_json):
+def calculate_row_points(row, stats_json, name_to_id_map):
     total_pts = 0
     jokers = [j.strip() for j in str(row.get("Joker_Slot", "")).split(",") if j.strip()]
-    
+
     # 1. Pass Offense Team
     pass_team = str(row.get("Pass_Offense", "")).strip()
     team_abbr = TEAM_MAPPING.get(pass_team, pass_team)
-    p_yd = stats_json.get(f"{team_abbr}_pass_yd", 0) or stats_json.get("pass_yd", 0)
-    p_td = stats_json.get(f"{team_abbr}_pass_td", 0) or stats_json.get("pass_td", 0)
+    # Team Stats bei Sleeper liegen oft in stats_json unter 'pass_yd' innerhalb der Team-ID oder aggregiert
+    # Fallback-Abfrage für Team Stats:
+    team_stats = stats_json.get(team_abbr, {})
+    p_yd = team_stats.get("pass_yd", 0) or stats_json.get(f"{team_abbr}_pass_yd", 0)
+    p_td = team_stats.get("pass_td", 0) or stats_json.get(f"{team_abbr}_pass_td", 0)
     pts_pass = calculate_pass_offense_points(p_yd, p_td)
     if "Pass_Offense" in jokers: pts_pass *= 2
     total_pts += pts_pass
@@ -275,8 +288,9 @@ def calculate_row_points(row, stats_json):
     # 2. Rush Offense Team
     rush_team = str(row.get("Rush_Offense", "")).strip()
     team_abbr_r = TEAM_MAPPING.get(rush_team, rush_team)
-    r_yd = stats_json.get(f"{team_abbr_r}_rush_yd", 0) or stats_json.get("rush_yd", 0)
-    r_td = stats_json.get(f"{team_abbr_r}_rush_td", 0) or stats_json.get("rush_td", 0)
+    rush_stats = stats_json.get(team_abbr_r, {})
+    r_yd = rush_stats.get("rush_yd", 0) or stats_json.get(f"{team_abbr_r}_rush_yd", 0)
+    r_td = rush_stats.get("rush_td", 0) or stats_json.get(f"{team_abbr_r}_rush_td", 0)
     pts_rush = calculate_rush_offense_points(r_yd, r_td)
     if "Rush_Offense" in jokers: pts_rush *= 2
     total_pts += pts_rush
@@ -284,19 +298,30 @@ def calculate_row_points(row, stats_json):
     # 3. Defense Team
     def_team = str(row.get("Defense", "")).strip()
     team_abbr_d = TEAM_MAPPING.get(def_team, def_team)
-    sacks = stats_json.get(f"{team_abbr_d}_sack", 0)
-    ints = stats_json.get(f"{team_abbr_d}_int", 0)
-    def_td = stats_json.get(f"{team_abbr_d}_def_td", 0)
-    opp_pts = stats_json.get(f"{team_abbr_d}_pts_allow", 0)
-    pts_def = calculate_def_points(sacks, ints, def_td, opp_pts)
+    def_stats = stats_json.get(team_abbr_d, {})
+    sacks = def_stats.get("sack", 0) or stats_json.get(f"{team_abbr_d}_sack", 0)
+    ints = def_stats.get("int", 0) or stats_json.get(f"{team_abbr_d}_int", 0)
+    def_td = def_stats.get("def_td", 0) or stats_json.get(f"{team_abbr_d}_def_td", 0)
+    opp_pts = def_stats.get("pts_allow", -1)
+    
+    # Nur wenn zugelassene Punkte von der API vorhanden sind, berechnen wir die Defense-Punkte
+    if opp_pts != -1:
+        pts_def = calculate_def_points(sacks, ints, def_td, opp_pts)
+    else:
+        pts_def = calculate_def_points(sacks, ints, def_td, 99) # kein Pauschal-Bonus wenn keine Spieldaten da sind
+        
     if "Defense" in jokers: pts_def *= 2
     total_pts += pts_def
 
-    # 4-6. Spieler (QB, WR, RB)
+    # 4-6. Einzelspieler (QB, WR, RB)
     for pos_key in ["QB", "WR", "RB"]:
-        p_name = row.get(pos_key, "")
-        if p_name and str(p_name) != "nan":
-            p_stats = get_sleeper_player_stats(stats_json, p_name)
+        raw_name = row.get(pos_key, "")
+        if raw_name and str(raw_name) != "nan":
+            clean_name = get_clean_player_name(raw_name).lower()
+            player_id = name_to_id_map.get(clean_name)
+            
+            p_stats = stats_json.get(player_id, {}) if player_id else {}
+            
             pass_yd = p_stats.get("pass_yd", 0)
             rush_yd = p_stats.get("rush_yd", 0)
             rec_yd = p_stats.get("rec_yd", 0)
@@ -319,22 +344,23 @@ with tab2:
     selected_week_calc = st.selectbox("Punkte-Auswertung für Week:", list(range(1, 19)), index=0)
     
     if not df_picks.empty:
-        # Kopie für die Live-Berechnung anlegen
         df_calc = df_picks.copy()
         
         if st.button("🔄 NFL-Punkte für ausgewählte Week live abrufen"):
-            stats = fetch_nfl_week_stats(2026, selected_week_calc)
-            if stats:
-                # Berechne Punkte für jede Zeile der ausgewählten Week
-                for idx, row in df_calc.iterrows():
-                    if int(row.get("Week", 0)) == int(selected_week_calc):
-                        computed_pts = calculate_row_points(row, stats)
-                        df_calc.at[idx, "Punkte"] = computed_pts
+            with st.spinner("Lade NFL-Statistiken von Sleeper..."):
+                stats = fetch_nfl_week_stats(2026, selected_week_calc)
+                players_map = fetch_sleeper_players_map()
                 
-                st.success(f"NFL-Boxscores für Week {selected_week_calc} erfolgreich berechnet!")
-                df_picks = df_calc
-            else:
-                st.warning(f"Keine Statistiken für Week {selected_week_calc} von der API erhalten.")
+                if stats:
+                    for idx, row in df_calc.iterrows():
+                        if int(row.get("Week", 0)) == int(selected_week_calc):
+                            computed_pts = calculate_row_points(row, stats, players_map)
+                            df_calc.at[idx, "Punkte"] = computed_pts
+                    
+                    st.success(f"NFL-Boxscores für Week {selected_week_calc} erfolgreich berechnet!")
+                    df_picks = df_calc
+                else:
+                    st.warning(f"Keine Statistiken für Week {selected_week_calc} von der API erhalten.")
 
         # Aggregiere Gesamtpunkte pro Spieler
         if "Punkte" in df_picks.columns and "Spieler_Name" in df_picks.columns:
