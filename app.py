@@ -270,21 +270,28 @@ def fetch_sleeper_players_map():
         pass
     return {}
 
-def calculate_row_points(row, stats_json, name_to_id_map):
+def calculate_row_points_with_breakdown(row, stats_json, name_to_id_map):
     total_pts = 0
+    breakdown = []
     jokers = [j.strip() for j in str(row.get("Joker_Slot", "")).split(",") if j.strip()]
 
     # 1. Pass Offense Team
     pass_team = str(row.get("Pass_Offense", "")).strip()
     team_abbr = TEAM_MAPPING.get(pass_team, pass_team)
-    # Team Stats bei Sleeper liegen oft in stats_json unter 'pass_yd' innerhalb der Team-ID oder aggregiert
-    # Fallback-Abfrage für Team Stats:
     team_stats = stats_json.get(team_abbr, {})
     p_yd = team_stats.get("pass_yd", 0) or stats_json.get(f"{team_abbr}_pass_yd", 0)
     p_td = team_stats.get("pass_td", 0) or stats_json.get(f"{team_abbr}_pass_td", 0)
     pts_pass = calculate_pass_offense_points(p_yd, p_td)
     if "Pass_Offense" in jokers: pts_pass *= 2
     total_pts += pts_pass
+    breakdown.append({
+        "Kategorie": "Pass Offense",
+        "Auswahl": pass_team,
+        "Sleeper-Key/ID": team_abbr,
+        "Stats": f"{p_yd} Yds, {p_td} TDs",
+        "Joker": "Pass_Offense" in jokers,
+        "Punkte": pts_pass
+    })
 
     # 2. Rush Offense Team
     rush_team = str(row.get("Rush_Offense", "")).strip()
@@ -295,6 +302,14 @@ def calculate_row_points(row, stats_json, name_to_id_map):
     pts_rush = calculate_rush_offense_points(r_yd, r_td)
     if "Rush_Offense" in jokers: pts_rush *= 2
     total_pts += pts_rush
+    breakdown.append({
+        "Kategorie": "Rush Offense",
+        "Auswahl": rush_team,
+        "Sleeper-Key/ID": team_abbr_r,
+        "Stats": f"{r_yd} Yds, {r_td} TDs",
+        "Joker": "Rush_Offense" in jokers,
+        "Punkte": pts_rush
+    })
 
     # 3. Defense Team
     def_team = str(row.get("Defense", "")).strip()
@@ -304,17 +319,19 @@ def calculate_row_points(row, stats_json, name_to_id_map):
     ints = def_stats.get("int", 0) or stats_json.get(f"{team_abbr_d}_int", 0)
     def_td = def_stats.get("def_td", 0) or stats_json.get(f"{team_abbr_d}_def_td", 0)
     opp_pts = def_stats.get("pts_allow", -1)
-    
-    # Nur wenn zugelassene Punkte von der API vorhanden sind, berechnen wir die Defense-Punkte
-    if opp_pts != -1:
-        pts_def = calculate_def_points(sacks, ints, def_td, opp_pts)
-    else:
-        pts_def = calculate_def_points(sacks, ints, def_td, 99) # kein Pauschal-Bonus wenn keine Spieldaten da sind
-        
+    pts_def = calculate_def_points(sacks, ints, def_td, opp_pts if opp_pts != -1 else 99)
     if "Defense" in jokers: pts_def *= 2
     total_pts += pts_def
+    breakdown.append({
+        "Kategorie": "Defense",
+        "Auswahl": def_team,
+        "Sleeper-Key/ID": team_abbr_d,
+        "Stats": f"{sacks} Sacks, {ints} INTs, {def_td} TDs, {opp_pts} Pts Allowed",
+        "Joker": "Defense" in jokers,
+        "Punkte": pts_def
+    })
 
-        # 4-6. Einzelspieler (QB, WR, RB)
+    # 4-6. Einzelspieler (QB, WR, RB)
     for pos_key in ["QB", "WR", "RB"]:
         raw_name = row.get(pos_key, "")
         if raw_name and str(raw_name) != "nan":
@@ -329,13 +346,23 @@ def calculate_row_points(row, stats_json, name_to_id_map):
             pass_td = p_stats.get("pass_td", 0)
             rush_td = p_stats.get("rush_td", 0)
             rec_td = p_stats.get("rec_td", 0)
-            pass_int = p_stats.get("pass_int", 0)  # Interceptions von Sleeper holen
+            pass_int = p_stats.get("pass_int", 0)
             
             p_pts = calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td, pass_int)
             if pos_key in jokers: p_pts *= 2
             total_pts += p_pts
+            
+            breakdown.append({
+                "Kategorie": pos_key,
+                "Auswahl": raw_name,
+                "Sleeper-Key/ID": player_id if player_id else "❌ NOT FOUND",
+                "Stats": f"P_Yd:{pass_yd}, R_Yd:{rush_yd}, Rec_Yd:{rec_yd}, TDs:{pass_td+rush_td+rec_td}, INT:{pass_int}",
+                "Joker": pos_key in jokers,
+                "Punkte": p_pts
+            })
 
-    return total_pts
+    return total_pts, pd.DataFrame(breakdown)
+
 
 # ==========================================
 # TAB 2: RANGLISTE & LIVE BERECHNUNG
@@ -354,25 +381,34 @@ with tab2:
                 players_map = fetch_sleeper_players_map()
                 
                 if stats:
+                    breakdowns = {}
                     for idx, row in df_calc.iterrows():
                         if int(row.get("Week", 0)) == int(selected_week_calc):
-                            computed_pts = calculate_row_points(row, stats, players_map)
+                            computed_pts, df_bd = calculate_row_points_with_breakdown(row, stats, players_map)
                             df_calc.at[idx, "Punkte"] = computed_pts
+                            breakdowns[f"{row.get('Spieler_Name')} (Week {selected_week_calc})"] = df_bd
                     
+                    st.session_state["breakdowns"] = breakdowns
                     st.success(f"NFL-Boxscores für Week {selected_week_calc} erfolgreich berechnet!")
                     df_picks = df_calc
                 else:
                     st.warning(f"Keine Statistiken für Week {selected_week_calc} von der API erhalten.")
 
-        # Aggregiere Gesamtpunkte pro Spieler
+        # Rangliste anzeigen
         if "Punkte" in df_picks.columns and "Spieler_Name" in df_picks.columns:
             leaderboard = df_picks.groupby("Spieler_Name")["Punkte"].sum().reset_index()
             leaderboard = leaderboard.sort_values(by="Punkte", ascending=False)
             
-            col_rank1, col_rank2 = st.columns(2)
-            with col_rank1:
-                st.dataframe(leaderboard, use_container_width=True, hide_index=True)
-                
+            st.dataframe(leaderboard, use_container_width=True, hide_index=True)
+            
+            # --- NEU: Detaillierte Fehlerdiagnose / Aufschlüsselung ---
+            if "breakdowns" in st.session_state:
+                st.markdown("---")
+                st.subheader("🔍 Detail-Analyse der Punkteberechnung")
+                for name, df_bd in st.session_state["breakdowns"].items():
+                    with st.expander(f"📊 Detail-Punkte für {name}"):
+                        st.dataframe(df_bd, use_container_width=True, hide_index=True)
+
             st.markdown("---")
             st.subheader("📋 Bisherige Picks & Punkte")
             st.dataframe(df_picks, use_container_width=True, hide_index=True)
