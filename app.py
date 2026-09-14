@@ -247,32 +247,106 @@ with tab1:
                 st.error("Fehler beim Speichern in Google Sheets.")
 
 # ==========================================
-# TAB 2: RANGLISTE & AUTOMATISCHER ABGLEICH
+# HELPER FOR SLEEPER STATS MATCHING
+# ==========================================
+def get_sleeper_player_stats(stats_json, player_name):
+    """Sucht nach dem Spieler-Namen im Sleeper-Stats-JSON."""
+    clean_search_name = re.sub(r'\s*\([^)]*\)', '', str(player_name)).strip().lower()
+    for player_id, p_stats in stats_json.items():
+        # Manche API-Responsen nutzen 'player' mit Namen
+        p_name = p_stats.get("player_name", "") or p_stats.get("full_name", "")
+        if clean_search_name in p_name.lower():
+            return p_stats
+    return {}
+
+def calculate_row_points(row, stats_json):
+    total_pts = 0
+    jokers = [j.strip() for j in str(row.get("Joker_Slot", "")).split(",") if j.strip()]
+    
+    # 1. Pass Offense Team
+    pass_team = str(row.get("Pass_Offense", "")).strip()
+    team_abbr = TEAM_MAPPING.get(pass_team, pass_team)
+    p_yd = stats_json.get(f"{team_abbr}_pass_yd", 0) or stats_json.get("pass_yd", 0)
+    p_td = stats_json.get(f"{team_abbr}_pass_td", 0) or stats_json.get("pass_td", 0)
+    pts_pass = calculate_pass_offense_points(p_yd, p_td)
+    if "Pass_Offense" in jokers: pts_pass *= 2
+    total_pts += pts_pass
+
+    # 2. Rush Offense Team
+    rush_team = str(row.get("Rush_Offense", "")).strip()
+    team_abbr_r = TEAM_MAPPING.get(rush_team, rush_team)
+    r_yd = stats_json.get(f"{team_abbr_r}_rush_yd", 0) or stats_json.get("rush_yd", 0)
+    r_td = stats_json.get(f"{team_abbr_r}_rush_td", 0) or stats_json.get("rush_td", 0)
+    pts_rush = calculate_rush_offense_points(r_yd, r_td)
+    if "Rush_Offense" in jokers: pts_rush *= 2
+    total_pts += pts_rush
+
+    # 3. Defense Team
+    def_team = str(row.get("Defense", "")).strip()
+    team_abbr_d = TEAM_MAPPING.get(def_team, def_team)
+    sacks = stats_json.get(f"{team_abbr_d}_sack", 0)
+    ints = stats_json.get(f"{team_abbr_d}_int", 0)
+    def_td = stats_json.get(f"{team_abbr_d}_def_td", 0)
+    opp_pts = stats_json.get(f"{team_abbr_d}_pts_allow", 0)
+    pts_def = calculate_def_points(sacks, ints, def_td, opp_pts)
+    if "Defense" in jokers: pts_def *= 2
+    total_pts += pts_def
+
+    # 4-6. Spieler (QB, WR, RB)
+    for pos_key in ["QB", "WR", "RB"]:
+        p_name = row.get(pos_key, "")
+        if p_name and str(p_name) != "nan":
+            p_stats = get_sleeper_player_stats(stats_json, p_name)
+            pass_yd = p_stats.get("pass_yd", 0)
+            rush_yd = p_stats.get("rush_yd", 0)
+            rec_yd = p_stats.get("rec_yd", 0)
+            pass_td = p_stats.get("pass_td", 0)
+            rush_td = p_stats.get("rush_td", 0)
+            rec_td = p_stats.get("rec_td", 0)
+            
+            p_pts = calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td)
+            if pos_key in jokers: p_pts *= 2
+            total_pts += p_pts
+
+    return total_pts
+
+# ==========================================
+# TAB 2: RANGLISTE & LIVE BERECHNUNG
 # ==========================================
 with tab2:
     st.subheader("🏆 Aktueller Spielstand")
     
-    selected_week_calc = st.selectbox("Punkte-Auswertung für Week:", list(range(1, 19)), index=int(spieltag)-1)
+    selected_week_calc = st.selectbox("Punkte-Auswertung für Week:", list(range(1, 19)), index=0)
     
-    if st.button("🔄 NFL-Punkte für ausgewählte Week live abrufen"):
-        stats = fetch_nfl_week_stats(2026, selected_week_calc)
-        if stats:
-            st.success(f"NFL-Boxscores für Week {selected_week_calc} geladen! Punkte werden berechnet.")
-        else:
-            st.warning(f"Keine Statistiken für Week {selected_week_calc} gefunden (Spieltag noch nicht gestartet/beendet?).")
-
-    st.markdown("---")
-    
-    if not df_picks.empty and "Punkte" in df_picks.columns:
-        leaderboard = df_picks.groupby("Spieler_Name")["Punkte"].sum().reset_index()
-        leaderboard = leaderboard.sort_values(by="Punkte", ascending=False)
+    if not df_picks.empty:
+        # Kopie für die Live-Berechnung anlegen
+        df_calc = df_picks.copy()
         
-        col_rank1, col_rank2 = st.columns(2)
-        with col_rank1:
-            st.dataframe(leaderboard, use_container_width=True, hide_index=True)
+        if st.button("🔄 NFL-Punkte für ausgewählte Week live abrufen"):
+            stats = fetch_nfl_week_stats(2026, selected_week_calc)
+            if stats:
+                # Berechne Punkte für jede Zeile der ausgewählten Week
+                for idx, row in df_calc.iterrows():
+                    if int(row.get("Week", 0)) == int(selected_week_calc):
+                        computed_pts = calculate_row_points(row, stats)
+                        df_calc.at[idx, "Punkte"] = computed_pts
+                
+                st.success(f"NFL-Boxscores für Week {selected_week_calc} erfolgreich berechnet!")
+                df_picks = df_calc
+            else:
+                st.warning(f"Keine Statistiken für Week {selected_week_calc} von der API erhalten.")
+
+        # Aggregiere Gesamtpunkte pro Spieler
+        if "Punkte" in df_picks.columns and "Spieler_Name" in df_picks.columns:
+            leaderboard = df_picks.groupby("Spieler_Name")["Punkte"].sum().reset_index()
+            leaderboard = leaderboard.sort_values(by="Punkte", ascending=False)
             
-        st.markdown("---")
-        st.subheader("📋 Alle bisher abgegebenen Picks")
-        st.dataframe(df_picks, use_container_width=True, hide_index=True)
+            col_rank1, col_rank2 = st.columns(2)
+            with col_rank1:
+                st.dataframe(leaderboard, use_container_width=True, hide_index=True)
+                
+            st.markdown("---")
+            st.subheader("📋 Bisherige Picks & Punkte")
+            st.dataframe(df_picks, use_container_width=True, hide_index=True)
     else:
-        st.info("Noch keine Picks in Google Sheets vorhanden.")
+        st.info("Noch keine Picks vorhanden.")
