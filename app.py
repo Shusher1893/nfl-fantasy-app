@@ -426,7 +426,8 @@ with tab2:
 
         # 1. Gesamtwertung (Kennzahlen-Karten) direkt GANZ OBEN anzeigen
         season_leaderboard = df_display.groupby("Spieler_Name")["Punkte"].sum().reset_index()
-        season_leaderboard = season_leaderboard.sort_values(by="Punkte", ascending=False)
+        # Absteigend nach Punkten sortieren UND den Index zurücksetzen
+        season_leaderboard = season_leaderboard.sort_values(by="Punkte", ascending=False).reset_index(drop=True)
         
         col1, col2 = st.columns(2)
         cols = [col1, col2]
