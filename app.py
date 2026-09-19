@@ -31,9 +31,12 @@ def load_data():
 
 df_picks, df_kader = load_data()
 
-def update_points_in_gsheet(conn, df_updated):
+from streamlit_gsheets import GSheetsConnection
+
+def update_points_in_gsheet(df_updated):
     """Speichert die aktualisierte Tabelle mit den berechneten Punkten zurück in Google Sheets."""
     try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
         conn.update(worksheet="Picks", data=df_updated)
         st.cache_data.clear()  # Cache leeren, damit die neuen Daten sofort geladen werden
         return True
@@ -450,7 +453,8 @@ with tab2:
         # Button zum dauerhaften Speichern der Punkte in Google Sheets
         if "df_calc_temp" in st.session_state:
             if st.button("💾 Punkte dauerhaft in Google Sheet speichern"):
-                if update_points_in_gsheet(conn, st.session_state["df_calc_temp"]):
+                if update_points_in_gsheet(st.session_state["df_calc_temp"]):
+
                     st.success("Punkte erfolgreich in Google Sheets gespeichert!")
                     del st.session_state["df_calc_temp"]
                     st.rerun()
