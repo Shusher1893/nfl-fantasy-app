@@ -454,7 +454,6 @@ with tab2:
         if "df_calc_temp" in st.session_state:
             if st.button("💾 Punkte dauerhaft in Google Sheet speichern"):
                 if update_points_in_gsheet(st.session_state["df_calc_temp"]):
-
                     st.success("Punkte erfolgreich in Google Sheets gespeichert!")
                     del st.session_state["df_calc_temp"]
                     st.rerun()
