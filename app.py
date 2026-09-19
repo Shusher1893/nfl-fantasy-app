@@ -413,13 +413,41 @@ def calculate_row_points_with_breakdown(row, stats_json, name_to_id_map, id_to_t
 with tab2:
     st.subheader("🏆 Saison-Gesamtwertung")
     
-    # 1. Gesamtwertung über alle bisherigen Wochen anzeigen
     if not df_picks.empty:
-        # Punkte-Spalte in Zahlen umwandeln (falls leer, mit 0 füllen)
-        df_picks["Punkte"] = pd.to_numeric(df_picks.get("Punkte", 0), errors="coerce").fillna(0)
+        df_calc = df_picks.copy()
         
-        # Aggregation über die gesamte Saison
-        season_leaderboard = df_picks.groupby("Spieler_Name")["Punkte"].sum().reset_index()
+        # Punkte-Spalte sicherstellen und numerisch formatieren
+        if "Punkte" not in df_calc.columns:
+            df_calc["Punkte"] = 0
+        df_calc["Punkte"] = pd.to_numeric(df_calc["Punkte"], errors="coerce").fillna(0)
+        
+        st.markdown("### 📊 Wöchentliche Punkte-Auswertung")
+        selected_week_calc = st.selectbox("Punkte-Auswertung für Week:", list(range(1, 19)), index=0)
+        
+        if st.button("🔄 NFL-Punkte für ausgewählte Week live abrufen"):
+            with st.spinner("Lade NFL-Statistiken von Sleeper..."):
+                stats = fetch_nfl_week_stats(2026, selected_week_calc)
+                players_map, id_to_team_map = fetch_sleeper_players_map()
+                
+                if stats:
+                    breakdowns = {}
+                    for idx, row in df_calc.iterrows():
+                        if int(row.get("Week", 0)) == int(selected_week_calc):
+                            computed_pts, df_bd = calculate_row_points_with_breakdown(row, stats, players_map, id_to_team_map)
+                            df_calc.at[idx, "Punkte"] = computed_pts
+                            breakdowns[f"{row.get('Spieler_Name')} (Week {selected_week_calc})"] = df_bd
+                    
+                    st.session_state["breakdowns"] = breakdowns
+                    st.session_state["df_calc_active"] = df_calc
+                    st.success(f"NFL-Boxscores für Week {selected_week_calc} erfolgreich berechnet!")
+                else:
+                    st.warning(f"Keine Statistiken für Week {selected_week_calc} von der API erhalten.")
+
+        # Falls Live-Daten abgerufen wurden, nehmen wir diesen Stand für die Anzeige
+        df_display = st.session_state.get("df_calc_active", df_calc)
+
+        # 1. Gesamtwertung über alle bisherigen Wochen anzeigen
+        season_leaderboard = df_display.groupby("Spieler_Name")["Punkte"].sum().reset_index()
         season_leaderboard = season_leaderboard.sort_values(by="Punkte", ascending=False)
         season_leaderboard.rename(columns={"Punkte": "Gesamtpunkte Saison"}, inplace=True)
         
@@ -432,42 +460,8 @@ with tab2:
                     label=f"Platz {idx+1}: {row['Spieler_Name']}", 
                     value=f"{int(row['Gesamtpunkte Saison'])} Pkt"
                 )
-        
-        st.markdown("---")
-        st.subheader("📊 Wöchentliche Punkte-Auswertung & Aktualisierung")
-        
-        selected_week_calc = st.selectbox("Punkte-Auswertung für Week:", list(range(1, 19)), index=0)
-        
-        if st.button("🔄 NFL-Punkte für ausgewählte Week live abrufen"):
-            with st.spinner("Lade NFL-Statistiken von Sleeper..."):
-                stats = fetch_nfl_week_stats(2026, selected_week_calc)
-                players_map, id_to_team_map = fetch_sleeper_players_map()
-                
-                if stats:
-                    breakdowns = {}
-                    df_calc = df_picks.copy()
-                    
-                    for idx, row in df_calc.iterrows():
-                        if int(row.get("Week", 0)) == int(selected_week_calc):
-                            computed_pts, df_bd = calculate_row_points_with_breakdown(row, stats, players_map, id_to_team_map)
-                            df_calc.at[idx, "Punkte"] = computed_pts
-                            breakdowns[f"{row.get('Spieler_Name')} (Week {selected_week_calc})"] = df_bd
-                    
-                    st.session_state["breakdowns"] = breakdowns
-                    st.session_state["df_calc_temp"] = df_calc
-                    st.success(f"NFL-Boxscores für Week {selected_week_calc} erfolgreich berechnet!")
-                else:
-                    st.warning(f"Keine Statistiken für Week {selected_week_calc} von der API erhalten.")
 
-        # Button zum dauerhaften Speichern der Punkte in Google Sheets
-        if "df_calc_temp" in st.session_state:
-            if st.button("💾 Punkte dauerhaft in Google Sheet speichern"):
-                if update_points_in_gsheet(st.session_state["df_calc_temp"]):
-                    st.success("Punkte erfolgreich in Google Sheets gespeichert!")
-                    del st.session_state["df_calc_temp"]
-                    st.rerun()
-
-        # Detaillierte Fehlerdiagnose / Aufschlüsselung
+        # 2. Detaillierte Fehlerdiagnose / Aufschlüsselung anzeigen
         if "breakdowns" in st.session_state:
             st.markdown("---")
             st.subheader("🔍 Detail-Analyse der Punkteberechnung")
@@ -475,9 +469,10 @@ with tab2:
                 with st.expander(f"📊 Detail-Punkte für {name}"):
                     st.dataframe(df_bd, use_container_width=True, hide_index=True)
 
+        # 3. Tabelle mit den bisherigen Picks & Punkten
         st.markdown("---")
         st.subheader("📋 Bisherige Picks & Punkteübersicht")
-        st.dataframe(df_picks, use_container_width=True, hide_index=True)
+        st.dataframe(df_display, use_container_width=True, hide_index=True)
 
     else:
         st.info("Noch keine Picks in Google Sheets vorhanden.")
