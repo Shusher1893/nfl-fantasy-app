@@ -421,7 +421,26 @@ with tab2:
             df_calc["Punkte"] = 0
         df_calc["Punkte"] = pd.to_numeric(df_calc["Punkte"], errors="coerce").fillna(0)
         
-        st.markdown("### 📊 Wöchentliche Punkte-Auswertung")
+        # Falls Live-Daten abgerufen wurden, nehmen wir diesen Stand für die Anzeige
+        df_display = st.session_state.get("df_calc_active", df_calc)
+
+        # 1. Gesamtwertung (Kennzahlen-Karten) direkt GANZ OBEN anzeigen
+        season_leaderboard = df_display.groupby("Spieler_Name")["Punkte"].sum().reset_index()
+        season_leaderboard = season_leaderboard.sort_values(by="Punkte", ascending=False)
+        
+        col1, col2 = st.columns(2)
+        cols = [col1, col2]
+        for idx, row in season_leaderboard.iterrows():
+            if idx < len(cols):
+                cols[idx].metric(
+                    label=f"Platz {idx+1}: {row['Spieler_Name']}", 
+                    value=f"{int(row['Punkte'])} Pkt"
+                )
+
+        st.markdown("---")
+        
+        # 2. Wöchentliche Punkte-Auswertung darunter
+        st.subheader("📊 Wöchentliche Punkte-Auswertung")
         selected_week_calc = st.selectbox("Punkte-Auswertung für Week:", list(range(1, 19)), index=0)
         
         if st.button("🔄 NFL-Punkte für ausgewählte Week live abrufen"):
@@ -440,28 +459,11 @@ with tab2:
                     st.session_state["breakdowns"] = breakdowns
                     st.session_state["df_calc_active"] = df_calc
                     st.success(f"NFL-Boxscores für Week {selected_week_calc} erfolgreich berechnet!")
+                    st.rerun()  # Aktualisiert die Seite, damit die Punkte oben sofort neu gerendert werden
                 else:
                     st.warning(f"Keine Statistiken für Week {selected_week_calc} von der API erhalten.")
 
-        # Falls Live-Daten abgerufen wurden, nehmen wir diesen Stand für die Anzeige
-        df_display = st.session_state.get("df_calc_active", df_calc)
-
-        # 1. Gesamtwertung über alle bisherigen Wochen anzeigen
-        season_leaderboard = df_display.groupby("Spieler_Name")["Punkte"].sum().reset_index()
-        season_leaderboard = season_leaderboard.sort_values(by="Punkte", ascending=False)
-        season_leaderboard.rename(columns={"Punkte": "Gesamtpunkte Saison"}, inplace=True)
-        
-        # Große Kennzahlen-Karten (Metrics) ganz oben anzeigen
-        col1, col2 = st.columns(2)
-        cols = [col1, col2]
-        for idx, row in season_leaderboard.iterrows():
-            if idx < len(cols):
-                cols[idx].metric(
-                    label=f"Platz {idx+1}: {row['Spieler_Name']}", 
-                    value=f"{int(row['Gesamtpunkte Saison'])} Pkt"
-                )
-
-        # 2. Detaillierte Fehlerdiagnose / Aufschlüsselung anzeigen
+        # 3. Detaillierte Fehlerdiagnose / Aufschlüsselung anzeigen
         if "breakdowns" in st.session_state:
             st.markdown("---")
             st.subheader("🔍 Detail-Analyse der Punkteberechnung")
@@ -469,7 +471,7 @@ with tab2:
                 with st.expander(f"📊 Detail-Punkte für {name}"):
                     st.dataframe(df_bd, use_container_width=True, hide_index=True)
 
-        # 3. Tabelle mit den bisherigen Picks & Punkten
+        # 4. Tabelle mit allen bisherigen Picks
         st.markdown("---")
         st.subheader("📋 Bisherige Picks & Punkteübersicht")
         st.dataframe(df_display, use_container_width=True, hide_index=True)
