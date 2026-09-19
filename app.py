@@ -36,13 +36,22 @@ from streamlit_gsheets import GSheetsConnection
 def update_points_in_gsheet(df_updated):
     """Speichert die aktualisierte Tabelle mit den berechneten Punkten zurück in Google Sheets."""
     try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
+        # Nutzung des vorhandenen Streamlit-Connections-Mechanismus
+        conn = st.connection("gsheets", type="streamlit_gsheets.GSheetsConnection")
         conn.update(worksheet="Picks", data=df_updated)
         st.cache_data.clear()  # Cache leeren, damit die neuen Daten sofort geladen werden
         return True
     except Exception as e:
-        st.error(f"Fehler beim Speichern in Google Sheets: {e}")
-        return False
+        # Fallback, falls st.connection anders initialisiert wurde
+        try:
+            from streamlit_gsheets import GSheetsConnection
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            conn.update(worksheet="Picks", data=df_updated)
+            st.cache_data.clear()
+            return True
+        except Exception as e_inner:
+            st.error(f"Fehler beim Speichern in Google Sheets: {e_inner}")
+            return False
 
 # Navigation Tabs
 tab1, tab2 = st.tabs(["📝 Aufstellung abgeben", "📊 Rangliste & Bisherige Picks"])
