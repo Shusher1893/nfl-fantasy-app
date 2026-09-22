@@ -283,18 +283,29 @@ def fetch_sleeper_players_map():
             data = res.json()
             name_to_id = {}
             id_to_team = {}
+            
+            # Relevante Offensiv-Positionen
+            OFFENSE_POSITIONS = ["QB", "RB", "WR", "TE", "K"]
+            
             for p_id, p_info in data.items():
                 full_name = p_info.get("full_name")
                 team = p_info.get("team")
+                pos = p_info.get("position")
+                
                 if full_name:
-                    name_to_id[full_name.strip().lower()] = p_id
+                    clean_name = full_name.strip().lower()
+                    
+                    # Wenn der Name noch nicht vorkommt ODER der neue Spieler ein Offensivspieler ist (z.B. QB Lamar Jackson statt DB Lamar Jackson)
+                    if clean_name not in name_to_id or pos in OFFENSE_POSITIONS:
+                        name_to_id[clean_name] = p_id
+                        
                 if team:
                     id_to_team[p_id] = team.upper()
+                    
             return name_to_id, id_to_team
     except Exception:
         pass
     return {}, {}
-
 
 def get_team_aggregated_offense_stats(team_abbr, stats_json, id_to_team_map):
     """
