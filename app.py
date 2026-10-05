@@ -167,7 +167,8 @@ def fetch_sleeper_players_map():
 
 def get_team_aggregated_offense_stats(target_team_code, stats_json, id_to_team_map):
     """
-    Summiert zuverlässig alle Pass- und Rush-Stats aller Spieler eines Teams.
+    Summiert Pass- und Rush-Stats eines Teams – prüft sowohl direkt den Team-Key 
+    in der API als auch die Einzelspieler des Teams.
     """
     total_p_yd = 0
     total_p_td = 0
@@ -175,22 +176,35 @@ def get_team_aggregated_offense_stats(target_team_code, stats_json, id_to_team_m
     total_r_td = 0
 
     target_code = resolve_team_code(target_team_code)
+    if not target_code or not stats_json:
+        return 0, 0, 0, 0
 
+    # FALL A: Sleeper liefert aggregierte Team-Stats direkt unter dem Team-Kürzel (z.B. "NO", "PHI")
+    if target_code in stats_json:
+        t_stats = stats_json[target_code]
+        p_yd = t_stats.get("pass_yd", 0) or t_stats.get("pass_yds", 0) or 0
+        p_td = t_stats.get("pass_td", 0) or t_stats.get("pass_tds", 0) or 0
+        r_yd = t_stats.get("rush_yd", 0) or t_stats.get("rush_yds", 0) or 0
+        r_td = t_stats.get("rush_td", 0) or t_stats.get("rush_tds", 0) or 0
+        
+        # Falls Werte direkt gefunden wurden:
+        if any([p_yd, p_td, r_yd, r_td]):
+            return p_yd, p_td, r_yd, r_td
+
+    # FALL B: Summation über alle Einzelspieler des Teams
     for p_id, p_stats in stats_json.items():
+        if not isinstance(p_stats, dict):
+            continue
+            
         p_id_str = str(p_id).strip()
-        
-        # 1. Prüfen über die geladene Spielerdatenbank
         player_team = id_to_team_map.get(p_id_str, "")
-        
-        # 2. Prüfen, ob bei den Wochensammlungen direkt ein Team liegt
         stat_team = resolve_team_code(p_stats.get("team", ""))
         
-        # Match prüfen
         if player_team == target_code or stat_team == target_code:
-            total_p_yd += p_stats.get("pass_yd", 0) or 0
-            total_p_td += p_stats.get("pass_td", 0) or 0
-            total_r_yd += p_stats.get("rush_yd", 0) or 0
-            total_r_td += p_stats.get("rush_td", 0) or 0
+            total_p_yd += p_stats.get("pass_yd", 0) or p_stats.get("pass_yds", 0) or 0
+            total_p_td += p_stats.get("pass_td", 0) or p_stats.get("pass_tds", 0) or 0
+            total_r_yd += p_stats.get("rush_yd", 0) or p_stats.get("rush_yds", 0) or 0
+            total_r_td += p_stats.get("rush_td", 0) or p_stats.get("rush_tds", 0) or 0
 
     return total_p_yd, total_p_td, total_r_yd, total_r_td
 
