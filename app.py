@@ -127,7 +127,7 @@ TEAM_MAPPING = {
     "Cowboys": "DAL", "Broncos": "DEN", "Lions": "DET", "Packers": "GB",
     "Texans": "HOU", "Colts": "IND", "Jaguars": "JAX", "Chiefs": "KC",
     "Raiders": "LV", "Chargers": "LAC", "Rams": "LAR", "Dolphins": "MIA",
-    "Vikings": "MIN", "Patriots": "NE", "Saints": "NO", "New Orleans Saints": "NO", "NOP": "NO", "Giants": "NYG",
+    "Vikings": "MIN", "Patriots": "NE", "Saints": "NO", "New Orleans Saints": "NO", "NOP": "NO", "New Orleans": "NO", "NO": "NO", "Giants": "NYG",
     "Jets": "NYJ", "Eagles": "PHI", "Steelers": "PIT", "49ers": "SF",
     "Seahawks": "SEA", "Buccaneers": "TB", "Titans": "TEN", "Commanders": "WAS"
 }
@@ -316,19 +316,15 @@ def get_team_aggregated_offense_stats(team_abbr, stats_json, id_to_team_map):
     total_r_yd = 0
     total_r_td = 0
 
-    # Falls NOP statt NO übergeben wird, auf NO vereinheitlichen
-    target_team = team_abbr.upper()
-    if target_team == "NOP":
-        target_team = "NO"
+    # Ziel-Team vereinheitlichen (NO und NOP gleichsetzen)
+    raw_target = str(team_abbr).strip().upper()
+    target_teams = {"NO", "NOP"} if raw_target in ["NO", "NOP"] else {raw_target}
 
     for p_id, p_stats in stats_json.items():
-        # Team des Spielers abfragen
-        player_team = id_to_team_map.get(str(p_id), "").upper()
-        if player_team == "NOP":
-            player_team = "NO"
-
-        # Wenn der Spieler zum gesuchten Team gehört, Yards & TDs aufsummieren
-        if player_team == target_team:
+        player_team = str(id_to_team_map.get(str(p_id), "")).strip().upper()
+        
+        # Prüfen, ob der Spieler zum gesuchten Team gehört
+        if player_team in target_teams:
             total_p_yd += p_stats.get("pass_yd", 0) or 0
             total_p_td += p_stats.get("pass_td", 0) or 0
             total_r_yd += p_stats.get("rush_yd", 0) or 0
