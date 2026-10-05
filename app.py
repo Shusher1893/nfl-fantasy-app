@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import requests
 import math
+import re
+from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="NFL Fantasy League", page_icon="🏈", layout="wide")
 st.title("🏈 NFL Fantasy Season 2026/2027")
@@ -31,20 +33,15 @@ def load_data():
 
 df_picks, df_kader = load_data()
 
-from streamlit_gsheets import GSheetsConnection
-
 def update_points_in_gsheet(df_updated):
     """Speichert die aktualisierte Tabelle mit den berechneten Punkten zurück in Google Sheets."""
     try:
-        # Nutzung des vorhandenen Streamlit-Connections-Mechanismus
-        conn = st.connection("gsheets", type="streamlit_gsheets.GSheetsConnection")
+        conn = st.connection("gsheets", type=GSheetsConnection)
         conn.update(worksheet="Picks", data=df_updated)
-        st.cache_data.clear()  # Cache leeren, damit die neuen Daten sofort geladen werden
+        st.cache_data.clear()
         return True
     except Exception as e:
-        # Fallback, falls st.connection anders initialisiert wurde
         try:
-            from streamlit_gsheets import GSheetsConnection
             conn = st.connection("gsheets", type=GSheetsConnection)
             conn.update(worksheet="Picks", data=df_updated)
             st.cache_data.clear()
@@ -60,50 +57,33 @@ tab1, tab2 = st.tabs(["📝 Aufstellung abgeben", "📊 Rangliste & Bisherige Pi
 # BERECHNUNGS-LOGIK FÜR ALLE 4 SLOT-TYPEN
 # ==========================================
 
-# 1. PASS OFFENSE (TEAM)
 def calculate_pass_offense_points(pass_yd, pass_td):
     pts = 0
-    pts += math.floor(pass_yd / 25) * 1
-    pts += pass_td * 6
+    pts += math.floor(max(0, pass_yd) / 25) * 1
+    pts += max(0, pass_td) * 6
     return pts
 
-# 2. RUSH OFFENSE (TEAM)
 def calculate_rush_offense_points(rush_yd, rush_td):
     pts = 0
-    pts += math.floor(rush_yd / 10) * 1
-    pts += rush_td * 6
+    pts += math.floor(max(0, rush_yd) / 10) * 1
+    pts += max(0, rush_td) * 6
     return pts
 
-# 3. EINZELSPIELER (QB, WR, RB)
 def calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td, pass_int=0):
     pts = 0
-    # Jede Kategorie wird einzeln abgerundet:
-    pts += max(0, math.floor(pass_yd / 25)) * 1  # 1 Pkt pro 25 Pass Yds
-    pts += max(0, math.floor(rush_yd / 10)) * 1  # 1 Pkt pro 10 Rush Yds
-    pts += max(0, math.floor(rec_yd / 10)) * 1   # 1 Pkt pro 10 Rec Yds
-    pts += (pass_td + rush_td + rec_td) * 6       # 6 Pkt pro TD
-    pts -= pass_int * 2                           # 2 Minuspunkte pro Interception
+    pts += max(0, math.floor(pass_yd / 25)) * 1
+    pts += max(0, math.floor(rush_yd / 10)) * 1
+    pts += max(0, math.floor(rec_yd / 10)) * 1
+    pts += (max(0, pass_td) + max(0, rush_td) + max(0, rec_td)) * 6
+    pts -= max(0, pass_int) * 2
     return pts
 
-# 4. DEFENSE (TEAM)
 def calculate_def_points(sacks, interceptions, def_td, opponent_points):
-    """
-    Berechnet die Defense-Punkte nach deinen exakten Vorgaben:
-    - 1 Pkt pro Sack
-    - 2 Pkt pro Interception
-    - 6 Pkt pro Defensive TD
-    - Staffel-Bonus für zugelassene Punkte des Gegners:
-        0 Punkte           -> 10 Pkt
-        1 - 9 Punkte       -> 6 Pkt
-        10 - 20 Punkte     -> 3 Pkt
-        > 20 Punkte        -> 0 Pkt
-    """
     pts = 0
-    pts += max(0, sacks) * 1            # 1 Pkt pro Sack
-    pts += max(0, interceptions) * 2    # 2 Pkt pro Interception
-    pts += max(0, def_td) * 6           # 6 Pkt pro Def TD
+    pts += max(0, sacks) * 1
+    pts += max(0, interceptions) * 2
+    pts += max(0, def_td) * 6
     
-    # Exakter Staffel-Bonus für zugelassene Punkte (Opponent Points)
     if opponent_points == 0:
         pts += 10
     elif 1 <= opponent_points <= 9:
@@ -120,22 +100,26 @@ def calculate_def_points(sacks, interceptions, def_td, opponent_points):
 # SLEEPER API SCHNITTSTELLE & MAPPING
 # ==========================================
 
-# Zuordnung deiner Teamnamen zu den offiziellen NFL-Kürzeln der API
 TEAM_MAPPING = {
-    "Cardinals": "ARI", "Falcons": "ATL", "Ravens": "BAL", "Bills": "BUF",
-    "Panthers": "CAR", "Bears": "CHI", "Bengals": "CIN", "Browns": "CLE",
-    "Cowboys": "DAL", "Broncos": "DEN", "Lions": "DET", "Packers": "GB",
-    "Texans": "HOU", "Colts": "IND", "Jaguars": "JAX", "Chiefs": "KC",
-    "Raiders": "LV", "Chargers": "LAC", "Rams": "LAR", "Dolphins": "MIA",
-    "Vikings": "MIN", "Patriots": "NE", "Saints": "NO", "SAINTS": "NO", "New Orleans Saints": "NO", "NOP": "NO", "New Orleans": "NO", "NO": "NO", "Giants": "NYG",
-    "Jets": "NYJ", "Eagles": "PHI", "Steelers": "PIT", "49ers": "SF",
-    "Seahawks": "SEA", "Buccaneers": "TB", "Titans": "TEN", "Commanders": "WAS"
+    "CARDINALS": "ARI", "FALCONS": "ATL", "RAVENS": "BAL", "BILLS": "BUF",
+    "PANTHERS": "CAR", "BEARS": "CHI", "BENGALS": "CIN", "BROWNS": "CLE",
+    "COWBOYS": "DAL", "BRONCOS": "DEN", "LIONS": "DET", "PACKERS": "GB",
+    "TEXANS": "HOU", "COLTS": "IND", "JAGUARS": "JAX", "CHIEFS": "KC",
+    "RAIDERS": "LV", "CHARGERS": "LAC", "RAMS": "LAR", "DOLPHINS": "MIA",
+    "VIKINGS": "MIN", "PATRIOTS": "NE", "SAINTS": "NO", "NEW ORLEANS SAINTS": "NO", 
+    "NOP": "NO", "NEW ORLEANS": "NO", "NO": "NO", "GIANTS": "NYG",
+    "JETS": "NYJ", "EAGLES": "PHI", "STEELERS": "PIT", "49ERS": "SF",
+    "SEAHAWKS": "SEA", "BUCCANEERS": "TB", "TITANS": "TEN", "COMMANDERS": "WAS"
 }
 
-import re
+def resolve_team_code(team_input):
+    """Löst den Teamnamen/Kürzel sicher in das Standard-Sleeper-Kürzel auf."""
+    if not team_input or pd.isna(team_input):
+        return ""
+    clean_str = str(team_input).strip().upper()
+    return TEAM_MAPPING.get(clean_str, clean_str)
 
 def get_clean_player_name(display_name):
-    """ Entfernt z. B. '(Chiefs)' aus 'Patrick Mahomes (Chiefs)' """
     return re.sub(r'\s*\([^)]*\)', '', str(display_name)).strip()
 
 @st.cache_data(ttl=3600)
@@ -148,6 +132,67 @@ def fetch_nfl_week_stats(season, week):
     except Exception:
         pass
     return {}
+
+@st.cache_data(ttl=86400)
+def fetch_sleeper_players_map():
+    """Lädt die Spielerdatenbank (ID -> Name & ID -> Team)."""
+    try:
+        url = "https://api.sleeper.app/v1/players/nfl"
+        res = requests.get(url)
+        if res.status_code == 200:
+            data = res.json()
+            name_to_id = {}
+            id_to_team = {}
+            
+            OFFENSE_POSITIONS = ["QB", "RB", "WR", "TE", "K"]
+            
+            for p_id, p_info in data.items():
+                p_id_str = str(p_id).strip()
+                full_name = p_info.get("full_name")
+                team = p_info.get("team")
+                pos = p_info.get("position")
+                
+                if full_name:
+                    clean_name = full_name.strip().lower()
+                    if clean_name not in name_to_id or pos in OFFENSE_POSITIONS:
+                        name_to_id[clean_name] = p_id_str
+                        
+                if team:
+                    id_to_team[p_id_str] = resolve_team_code(team)
+                    
+            return name_to_id, id_to_team
+    except Exception:
+        pass
+    return {}, {}
+
+def get_team_aggregated_offense_stats(target_team_code, stats_json, id_to_team_map):
+    """
+    Summiert zuverlässig alle Pass- und Rush-Stats aller Spieler eines Teams.
+    """
+    total_p_yd = 0
+    total_p_td = 0
+    total_r_yd = 0
+    total_r_td = 0
+
+    target_code = resolve_team_code(target_team_code)
+
+    for p_id, p_stats in stats_json.items():
+        p_id_str = str(p_id).strip()
+        
+        # 1. Prüfen über die geladene Spielerdatenbank
+        player_team = id_to_team_map.get(p_id_str, "")
+        
+        # 2. Prüfen, ob bei den Wochensammlungen direkt ein Team liegt
+        stat_team = resolve_team_code(p_stats.get("team", ""))
+        
+        # Match prüfen
+        if player_team == target_code or stat_team == target_code:
+            total_p_yd += p_stats.get("pass_yd", 0) or 0
+            total_p_td += p_stats.get("pass_td", 0) or 0
+            total_r_yd += p_stats.get("rush_yd", 0) or 0
+            total_r_td += p_stats.get("rush_td", 0) or 0
+
+    return total_p_yd, total_p_td, total_r_yd, total_r_td
 
 # ==========================================
 # TAB 1: AUFSTELLUNG ABGEBEN
@@ -270,85 +315,17 @@ with tab1:
                 st.error("Fehler beim Speichern in Google Sheets.")
 
 # ==========================================
-# SLEEPER API SCHNITTSTELLE & MATCHING
+# PUNKT-BERECHNUNG ROW-BY-ROW
 # ==========================================
-
-@st.cache_data(ttl=0)
-def fetch_sleeper_players_map():
-    """Lädt einmal täglich die komplette Sleeper-Spielerdatenbank (ID -> Name & ID -> Team)."""
-    try:
-        url = "https://api.sleeper.app/v1/players/nfl"
-        res = requests.get(url)
-        if res.status_code == 200:
-            data = res.json()
-            name_to_id = {}
-            id_to_team = {}
-            
-            # Relevante Offensiv-Positionen
-            OFFENSE_POSITIONS = ["QB", "RB", "WR", "TE", "K"]
-            
-            for p_id, p_info in data.items():
-                full_name = p_info.get("full_name")
-                team = p_info.get("team")
-                pos = p_info.get("position")
-                
-                if full_name:
-                    clean_name = full_name.strip().lower()
-                    
-                    # Wenn der Name noch nicht vorkommt ODER der neue Spieler ein Offensivspieler ist (z.B. QB Lamar Jackson statt DB Lamar Jackson)
-                    if clean_name not in name_to_id or pos in OFFENSE_POSITIONS:
-                        name_to_id[clean_name] = p_id
-                        
-                if team:
-                    id_to_team[p_id] = team.upper()
-                    
-            return name_to_id, id_to_team
-    except Exception:
-        pass
-    return {}, {}
-
-def get_team_aggregated_offense_stats(team_abbr, stats_json, id_to_team_map):
-    """
-    Summiert alle Pass- und Rush-Stats aller Spieler eines bestimmten Teams für die Woche auf.
-    Unterstützt sowohl 'NO' als auch 'NOP' für New Orleans Saints.
-    """
-    total_p_yd = 0
-    total_p_td = 0
-    total_r_yd = 0
-    total_r_td = 0
-
-    # Ziel-Team-Set aufbauen (deckt sowohl NO als auch NOP ab)
-    raw_target = str(team_abbr).strip().upper()
-    if raw_target in ["NO", "NOP", "SAINTS", "NEW ORLEANS SAINTS"]:
-        target_teams = {"NO", "NOP"}
-    else:
-        target_teams = {raw_target}
-
-    for p_id, p_stats in stats_json.items():
-        # 1. Prüfen, welches Team dem Spieler in der Spielerdatenbank zugeordnet ist
-        player_team = str(id_to_team_map.get(str(p_id), "")).strip().upper()
-        
-        # 2. Prüfen, ob bei den Wochensammlungen ein Teamkürzel direkt im p_stats Objekt liegt
-        stat_team = str(p_stats.get("team", "")).strip().upper()
-        
-        # Match, wenn das Team des Spielers oder der Stat-Eintrag zu den Ziel-Teams gehört
-        if player_team in target_teams or stat_team in target_teams:
-            total_p_yd += p_stats.get("pass_yd", 0) or 0
-            total_p_td += p_stats.get("pass_td", 0) or 0
-            total_r_yd += p_stats.get("rush_yd", 0) or 0
-            total_r_td += p_stats.get("rush_td", 0) or 0
-
-    return total_p_yd, total_p_td, total_r_yd, total_r_td
 
 def calculate_row_points_with_breakdown(row, stats_json, name_to_id_map, id_to_team_map):
     total_pts = 0
     breakdown = []
     jokers = [j.strip() for j in str(row.get("Joker_Slot", "")).split(",") if j.strip()]
 
-    # 1. Pass Offense Team (Aggregiert aus allen Teamspielern)
+    # 1. Pass Offense Team
     pass_team = str(row.get("Pass_Offense", "")).strip()
-    # Großschreibung & Mapping abfangen
-    team_abbr_p = TEAM_MAPPING.get(pass_team, TEAM_MAPPING.get(pass_team.upper(), pass_team))
+    team_abbr_p = resolve_team_code(pass_team)
     p_yd, p_td, _, _ = get_team_aggregated_offense_stats(team_abbr_p, stats_json, id_to_team_map)
     
     pts_pass = calculate_pass_offense_points(p_yd, p_td)
@@ -363,9 +340,9 @@ def calculate_row_points_with_breakdown(row, stats_json, name_to_id_map, id_to_t
         "Punkte": pts_pass
     })
 
-    # 2. Rush Offense Team (Aggregiert aus allen Teamspielern)
+    # 2. Rush Offense Team
     rush_team = str(row.get("Rush_Offense", "")).strip()
-    team_abbr_r = TEAM_MAPPING.get(rush_team, TEAM_MAPPING.get(rush_team.upper(), rush_team))
+    team_abbr_r = resolve_team_code(rush_team)
     _, _, r_yd, r_td = get_team_aggregated_offense_stats(team_abbr_r, stats_json, id_to_team_map)
     
     pts_rush = calculate_rush_offense_points(r_yd, r_td)
@@ -382,12 +359,14 @@ def calculate_row_points_with_breakdown(row, stats_json, name_to_id_map, id_to_t
 
     # 3. Defense Team
     def_team = str(row.get("Defense", "")).strip()
-    team_abbr_d = TEAM_MAPPING.get(def_team, def_team)
+    team_abbr_d = resolve_team_code(def_team)
     def_stats = stats_json.get(team_abbr_d, {})
-    sacks = def_stats.get("sack", 0) or stats_json.get(f"{team_abbr_d}_sack", 0)
-    ints = def_stats.get("int", 0) or stats_json.get(f"{team_abbr_d}_int", 0)
-    def_td = def_stats.get("def_td", 0) or stats_json.get(f"{team_abbr_d}_def_td", 0)
+    
+    sacks = def_stats.get("sack", 0) or def_stats.get("sacks", 0) or 0
+    ints = def_stats.get("int", 0) or def_stats.get("interceptions", 0) or 0
+    def_td = def_stats.get("def_td", 0) or def_stats.get("int_ret_td", 0) or 0
     opp_pts = def_stats.get("pts_allow", -1)
+    
     pts_def = calculate_def_points(sacks, ints, def_td, opp_pts if opp_pts != -1 else 99)
     if "Defense" in jokers: pts_def *= 2
     total_pts += pts_def
@@ -395,7 +374,7 @@ def calculate_row_points_with_breakdown(row, stats_json, name_to_id_map, id_to_t
         "Kategorie": "Defense",
         "Auswahl": def_team,
         "Sleeper-Key/ID": team_abbr_d,
-        "Stats": f"{sacks} Sacks, {ints} INTs, {def_td} TDs, {opp_pts} Pts Allowed",
+        "Stats": f"{sacks} Sacks, {ints} INTs, {def_td} TDs, {opp_pts if opp_pts != -1 else 'N/A'} Pts Allowed",
         "Joker": "Defense" in jokers,
         "Punkte": pts_def
     })
@@ -407,15 +386,15 @@ def calculate_row_points_with_breakdown(row, stats_json, name_to_id_map, id_to_t
             clean_name = get_clean_player_name(raw_name).lower()
             player_id = name_to_id_map.get(clean_name)
             
-            p_stats = stats_json.get(player_id, {}) if player_id else {}
+            p_stats = stats_json.get(str(player_id), {}) if player_id else {}
             
-            pass_yd = p_stats.get("pass_yd", 0)
-            rush_yd = p_stats.get("rush_yd", 0)
-            rec_yd = p_stats.get("rec_yd", 0)
-            pass_td = p_stats.get("pass_td", 0)
-            rush_td = p_stats.get("rush_td", 0)
-            rec_td = p_stats.get("rec_td", 0)
-            pass_int = p_stats.get("pass_int", 0)
+            pass_yd = p_stats.get("pass_yd", 0) or 0
+            rush_yd = p_stats.get("rush_yd", 0) or 0
+            rec_yd = p_stats.get("rec_yd", 0) or 0
+            pass_td = p_stats.get("pass_td", 0) or 0
+            rush_td = p_stats.get("rush_td", 0) or 0
+            rec_td = p_stats.get("rec_td", 0) or 0
+            pass_int = p_stats.get("pass_int", 0) or 0
             
             p_pts = calculate_player_points(pass_yd, rush_yd, rec_yd, pass_td, rush_td, rec_td, pass_int)
             if pos_key in jokers: p_pts *= 2
@@ -441,17 +420,14 @@ with tab2:
     if not df_picks.empty:
         df_calc = df_picks.copy()
         
-        # Punkte-Spalte sicherstellen und numerisch formatieren
         if "Punkte" not in df_calc.columns:
             df_calc["Punkte"] = 0
         df_calc["Punkte"] = pd.to_numeric(df_calc["Punkte"], errors="coerce").fillna(0)
         
-        # Falls Live-Daten abgerufen wurden, nehmen wir diesen Stand für die Anzeige
         df_display = st.session_state.get("df_calc_active", df_calc)
 
-        # 1. Gesamtwertung (Kennzahlen-Karten) direkt GANZ OBEN anzeigen
+        # Gesamtwertung
         season_leaderboard = df_display.groupby("Spieler_Name")["Punkte"].sum().reset_index()
-        # Absteigend nach Punkten sortieren UND den Index zurücksetzen
         season_leaderboard = season_leaderboard.sort_values(by="Punkte", ascending=False).reset_index(drop=True)
         
         col1, col2 = st.columns(2)
@@ -465,7 +441,6 @@ with tab2:
 
         st.markdown("---")
         
-        # 2. Wöchentliche Punkte-Auswertung darunter
         st.subheader("📊 Wöchentliche Punkte-Auswertung")
         selected_week_calc = st.selectbox("Punkte-Auswertung für Week:", list(range(1, 19)), index=0)
         
@@ -485,11 +460,10 @@ with tab2:
                     st.session_state["breakdowns"] = breakdowns
                     st.session_state["df_calc_active"] = df_calc
                     st.success(f"NFL-Boxscores für Week {selected_week_calc} erfolgreich berechnet!")
-                    st.rerun()  # Aktualisiert die Seite, damit die Punkte oben sofort neu gerendert werden
+                    st.rerun()
                 else:
                     st.warning(f"Keine Statistiken für Week {selected_week_calc} von der API erhalten.")
 
-        # 3. Detaillierte Fehlerdiagnose / Aufschlüsselung anzeigen
         if "breakdowns" in st.session_state:
             st.markdown("---")
             st.subheader("🔍 Detail-Analyse der Punkteberechnung")
@@ -497,7 +471,6 @@ with tab2:
                 with st.expander(f"📊 Detail-Punkte für {name}"):
                     st.dataframe(df_bd, use_container_width=True, hide_index=True)
 
-        # 4. Tabelle mit allen bisherigen Picks
         st.markdown("---")
         st.subheader("📋 Bisherige Picks & Punkteübersicht")
         st.dataframe(df_display, use_container_width=True, hide_index=True)
