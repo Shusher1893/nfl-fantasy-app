@@ -310,21 +310,29 @@ def fetch_sleeper_players_map():
 def get_team_aggregated_offense_stats(team_abbr, stats_json, id_to_team_map):
     """
     Summiert alle Pass- und Rush-Stats aller Spieler eines bestimmten Teams für die Woche auf.
+    Unterstützt sowohl 'NO' als auch 'NOP' für New Orleans Saints.
     """
     total_p_yd = 0
     total_p_td = 0
     total_r_yd = 0
     total_r_td = 0
 
-    # Ziel-Team vereinheitlichen (NO und NOP gleichsetzen)
+    # Ziel-Team-Set aufbauen (deckt sowohl NO als auch NOP ab)
     raw_target = str(team_abbr).strip().upper()
-    target_teams = {"NO", "NOP"} if raw_target in ["NO", "NOP"] else {raw_target}
+    if raw_target in ["NO", "NOP", "SAINTS", "NEW ORLEANS SAINTS"]:
+        target_teams = {"NO", "NOP"}
+    else:
+        target_teams = {raw_target}
 
     for p_id, p_stats in stats_json.items():
+        # 1. Prüfen, welches Team dem Spieler in der Spielerdatenbank zugeordnet ist
         player_team = str(id_to_team_map.get(str(p_id), "")).strip().upper()
         
-        # Prüfen, ob der Spieler zum gesuchten Team gehört
-        if player_team in target_teams:
+        # 2. Prüfen, ob bei den Wochensammlungen ein Teamkürzel direkt im p_stats Objekt liegt
+        stat_team = str(p_stats.get("team", "")).strip().upper()
+        
+        # Match, wenn das Team des Spielers oder der Stat-Eintrag zu den Ziel-Teams gehört
+        if player_team in target_teams or stat_team in target_teams:
             total_p_yd += p_stats.get("pass_yd", 0) or 0
             total_p_td += p_stats.get("pass_td", 0) or 0
             total_r_yd += p_stats.get("rush_yd", 0) or 0
