@@ -339,7 +339,8 @@ def calculate_row_points_with_breakdown(row, stats_json, name_to_id_map, id_to_t
 
     # 1. Pass Offense Team (Aggregiert aus allen Teamspielern)
     pass_team = str(row.get("Pass_Offense", "")).strip()
-    team_abbr_p = TEAM_MAPPING.get(pass_team, pass_team)
+    # Großschreibung & Mapping abfangen
+    team_abbr_p = TEAM_MAPPING.get(pass_team, TEAM_MAPPING.get(pass_team.upper(), pass_team))
     p_yd, p_td, _, _ = get_team_aggregated_offense_stats(team_abbr_p, stats_json, id_to_team_map)
     
     pts_pass = calculate_pass_offense_points(p_yd, p_td)
@@ -356,7 +357,7 @@ def calculate_row_points_with_breakdown(row, stats_json, name_to_id_map, id_to_t
 
     # 2. Rush Offense Team (Aggregiert aus allen Teamspielern)
     rush_team = str(row.get("Rush_Offense", "")).strip()
-    team_abbr_r = TEAM_MAPPING.get(rush_team, rush_team)
+    team_abbr_r = TEAM_MAPPING.get(rush_team, TEAM_MAPPING.get(rush_team.upper(), rush_team))
     _, _, r_yd, r_td = get_team_aggregated_offense_stats(team_abbr_r, stats_json, id_to_team_map)
     
     pts_rush = calculate_rush_offense_points(r_yd, r_td)
