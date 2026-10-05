@@ -273,7 +273,7 @@ with tab1:
 # SLEEPER API SCHNITTSTELLE & MATCHING
 # ==========================================
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=0)
 def fetch_sleeper_players_map():
     """Lädt einmal täglich die komplette Sleeper-Spielerdatenbank (ID -> Name & ID -> Team)."""
     try:
