@@ -127,7 +127,7 @@ TEAM_MAPPING = {
     "Cowboys": "DAL", "Broncos": "DEN", "Lions": "DET", "Packers": "GB",
     "Texans": "HOU", "Colts": "IND", "Jaguars": "JAX", "Chiefs": "KC",
     "Raiders": "LV", "Chargers": "LAC", "Rams": "LAR", "Dolphins": "MIA",
-    "Vikings": "MIN", "Patriots": "NE", "Saints": "NO", "New Orleans Saints": "NO", "NOP": "NO", "New Orleans": "NO", "NO": "NO", "Giants": "NYG",
+    "Vikings": "MIN", "Patriots": "NE", "Saints": "NO", "SAINTS": "NO", "New Orleans Saints": "NO", "NOP": "NO", "New Orleans": "NO", "NO": "NO", "Giants": "NYG",
     "Jets": "NYJ", "Eagles": "PHI", "Steelers": "PIT", "49ers": "SF",
     "Seahawks": "SEA", "Buccaneers": "TB", "Titans": "TEN", "Commanders": "WAS"
 }
